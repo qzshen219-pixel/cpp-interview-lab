@@ -5,9 +5,10 @@ const key='cpp-interview-session-v1', $=id=>document.getElementById(id);
 const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const dates=[...new Set(bank.map(q=>q.sourceDate).filter(Boolean))].sort().reverse();
 $('source-filter').innerHTML+='<option value="每日">全部每日练习</option>'+dates.map(date=>`<option value="${date}">${date} 每日练习</option>`).join('');
-const searchText=new Map(bank.map(q=>[q.id,[q.title,q.module,q.prompt,q.sourceRoundTitle||''].join(' ').normalize('NFKC').toLowerCase()]));
+const projectOf=q=>q.project||(/\bIM\b|即时通[讯信]|聊天|client_msg|outbox/i.test([q.title,q.prompt,q.sourceRoundTitle||''].join(' '))?'IM':'通用');
+const searchText=new Map(bank.map(q=>[q.id,[q.title,q.module,q.prompt,q.sourceRoundTitle||'',projectOf(q)].join(' ').normalize('NFKC').toLowerCase()]));
 let visibleCount=60;
-const fresh=()=>({version:1,query:'',status:'all',source:'全部',module:'全部',type:'全部',mode:'practice',current:bank[0].id,entries:{},outcomes:{},exam:null,lastTest:null});
+const fresh=()=>({version:1,query:'',status:'all',source:'全部',project:'全部',module:'全部',type:'全部',mode:'practice',current:bank[0].id,entries:{},outcomes:{},exam:null,lastTest:null});
 let state=fresh(),storageOK=true,toastTimer,confirmAction;
 try {
   const saved=JSON.parse(sessionStorage.getItem(key));
@@ -15,6 +16,7 @@ try {
     if(typeof saved.query==='string'&&saved.query.length<=120)state.query=saved.query;
     if(['all','pending','answered','review'].includes(saved.status))state.status=saved.status;
     if(['全部','基础','每日',...dates].includes(saved.source))state.source=saved.source;
+    if(['全部','IM','云盘','通用'].includes(saved.project))state.project=saved.project;
     if(saved.module==='全部'||info[saved.module]) state.module=saved.module;
     if(['全部','概念题','场景题','代码题'].includes(saved.type)) state.type=saved.type;
     if(byId.has(saved.current)) state.current=saved.current;
@@ -29,7 +31,7 @@ try {
     }
   }
 }catch{storageOK=false;}
-let listExpanded=false,filtersExpanded=state.module!=='全部'||state.type!=='全部'||state.source!=='全部'||Boolean(state.query)||state.status!=='all';
+let listExpanded=false,filtersExpanded=state.project!=='全部'||state.module!=='全部'||state.type!=='全部'||state.source!=='全部'||Boolean(state.query)||state.status!=='all';
 function setListExpanded(on){listExpanded=on;document.documentElement?.classList.toggle('questions-open',on);$('mobile-list-toggle').setAttribute('aria-expanded',on);$('mobile-list-toggle').textContent=`${on?'收起':'展开'}列表 · ${listQuestions().length}`;}
 function setFiltersExpanded(on){filtersExpanded=on;document.documentElement?.classList.toggle('filters-open',on);$('mobile-filter-toggle').setAttribute('aria-expanded',on);}
 setListExpanded(false);setFiltersExpanded(filtersExpanded);
@@ -38,9 +40,9 @@ function persist(){try{sessionStorage.setItem(key,JSON.stringify(state));}catch{
 function isCompleted(id){return Boolean(state.entries[id]?.submitted?.trim())||Object.hasOwn(state.outcomes,id);}
 function filtered(){
  const words=state.query.normalize('NFKC').toLowerCase().trim().split(/\s+/).filter(Boolean);
- return bank.filter(q=>(state.module==='全部'||q.module===state.module)&&(state.type==='全部'||q.type===state.type)&&(state.source==='全部'||state.source==='基础'&&!q.sourceDate||state.source==='每日'&&q.sourceDate||q.sourceDate===state.source)&&words.every(word=>searchText.get(q.id).includes(word))&&(state.status==='all'||state.status==='pending'&&!isCompleted(q.id)||state.status==='answered'&&isCompleted(q.id)||state.status==='review'&&needsReview(q.id)));
+ return bank.filter(q=>(state.project==='全部'||projectOf(q)===state.project)&&(state.module==='全部'||q.module===state.module)&&(state.type==='全部'||q.type===state.type)&&(state.source==='全部'||state.source==='基础'&&!q.sourceDate||state.source==='每日'&&q.sourceDate||q.sourceDate===state.source)&&words.every(word=>searchText.get(q.id).includes(word))&&(state.status==='all'||state.status==='pending'&&!isCompleted(q.id)||state.status==='answered'&&isCompleted(q.id)||state.status==='review'&&needsReview(q.id)));
 }
-function clearFilters(){return configure('全部','全部','全部','','all');}
+function clearFilters(){return configure('全部','全部','全部','','all','全部');}
 function revealActive(){if(window.matchMedia?.('(max-width: 700px)').matches){setListExpanded(false);$('question').scrollIntoView?.({block:'start',behavior:'auto'});$('question').focus({preventScroll:true});}else $('question-items').querySelector('[aria-current="true"]')?.scrollIntoView({block:'nearest',inline:'nearest',behavior:'auto'});}
 function completedIds(){return bank.filter(q=>Boolean(state.entries[q.id]?.submitted?.trim())||Object.hasOwn(state.outcomes,q.id)).map(q=>q.id);}
 function needsReview(id){const rating=state.entries[id]?.rating;return rating?rating==='review':state.outcomes[id]===false;}
@@ -68,7 +70,7 @@ function renderList(){
     let status='';
     if(ex){if(state.exam.submitted)status=q.manual?(needsReview(q.id)?'待复习':'已作答'):state.exam.answers[q.id]===q.correct?'答对':'答错';else if(state.exam.answers[q.id]!==undefined)status=q.manual?'有作答':'已选择';}
     else if(needsReview(q.id))status='待复习';else if(state.entries[q.id]?.rating)status=state.entries[q.id].rating==='fluent'?'熟练':'基本掌握';else if(state.entries[q.id]?.submitted)status='已作答';else if(Object.hasOwn(state.outcomes,q.id))status='已自测';else if(state.entries[q.id]?.draft)status='有草稿';
-    return `<button class="question-item ${selected?'active':''}" data-q="${q.id}" ${selected?'aria-current="true"':''}><span class="item-number">${String(i+1).padStart(2,'0')}</span><span class="item-body"><strong title="${esc(q.title)}">${esc(q.title)}</strong><span class="item-meta"><span>${esc(q.module)}</span><span>${esc(q.type)}</span>${q.sourceDate?`<span>${q.sourceDate}</span>`:''}${status?`<span class="item-status ${status==='待复习'||status==='答错'?'warn':''}">${status}</span>`:''}</span></span></button>`;
+    return `<button class="question-item ${selected?'active':''}" data-q="${q.id}" ${selected?'aria-current="true"':''}><span class="item-number">${String(i+1).padStart(2,'0')}</span><span class="item-body"><strong title="${esc(q.title)}">${esc(q.title)}</strong><span class="item-meta"><span>${esc(q.module)}</span><span>${esc(q.type)}</span>${projectOf(q)!=='通用'?`<span>${esc(projectOf(q))}</span>`:''}${q.sourceDate?`<span>${q.sourceDate}</span>`:''}${status?`<span class="item-status ${status==='待复习'||status==='答错'?'warn':''}">${status}</span>`:''}</span></span></button>`;
   }).join('')+(remaining?`<button class="list-more" id="load-more">再显示 ${Math.min(60,remaining)} 题 · 还有 ${remaining} 题</button>`:''):'<div class="empty">没有匹配的题目<br>试试更短的关键词或其他筛选。</div>';
   $('question-items').scrollTop=scroll;
 }
@@ -116,9 +118,9 @@ function markdown(text){
   }
   return output.join('');
 }
-function questionHeader(q,i,n){return `<div class="q-top"><div class="badges"><span class="badge">${esc(q.module)}</span><span class="badge">${esc(q.type)}</span>${q.priority?'<span class="badge focus">近期重点</span>':''}${q.sourceDate?`<span class="badge">${q.sourceDate} · 第 ${q.sourceRound} 轮</span>`:''}</div><span class="position">${String(i+1).padStart(2,'0')} / ${String(n).padStart(2,'0')}</span></div><h2>${esc(q.title)}</h2>${q.sourceDate?`<p class="daily-origin">${esc(q.sourceRoundTitle)}</p>`:''}${q.promptMarkdown?`<div class="prompt markdown">${markdown(q.promptMarkdown)}</div>`:`<p class="prompt">${esc(q.prompt)}</p>`}${q.code?codeMarkup(q.code,'cpp'):''}`;}
+function questionHeader(q,i,n){return `<div class="q-top"><div class="badges"><span class="badge">${esc(q.module)}</span><span class="badge">${esc(q.type)}</span>${projectOf(q)!=='通用'?`<span class="badge">${esc(projectOf(q))} 项目</span>`:''}${q.priority?'<span class="badge focus">近期重点</span>':''}${q.sourceDate?`<span class="badge">${q.sourceDate} · 第 ${q.sourceRound} 轮</span>`:''}</div><span class="position">${String(i+1).padStart(2,'0')} / ${String(n).padStart(2,'0')}</span></div><h2>${esc(q.title)}</h2>${q.sourceDate?`<p class="daily-origin">${esc(q.sourceRoundTitle)}</p>`:''}${q.promptMarkdown?`<div class="prompt markdown">${markdown(q.promptMarkdown)}</div>`:`<p class="prompt">${esc(q.prompt)}</p>`}${q.code?codeMarkup(q.code,'cpp'):''}`;}
 function answerMarkup(q,open=false,practice=true){
-  const e=state.entries[q.id];return `<details class="answer-details" ${open?'open':''}><summary>参考答案与易错点<span class="expand" aria-hidden="true">+</span></summary><div class="answer-content">${q.answerMarkdown?`<div class="markdown">${markdown(q.answerMarkdown)}</div>`:`<ol class="answer-points">${q.answer.map(a=>`<li>${esc(a)}</li>`).join('')}</ol><div class="pitfalls"><h3>易错点</h3><ul>${q.pitfalls.map(a=>`<li>${esc(a)}</li>`).join('')}</ul></div><div class="follow"><h3>面试追问</h3><p>${esc(q.follow)}</p></div>`}${info[q.module].source?`<a class="source" href="${info[q.module].source}" target="_blank" rel="noopener noreferrer">延伸阅读 · ${esc(info[q.module].label)}</a>`:''}${practice?`<div class="self-eval"><span>对照答案后，标记本题掌握程度</span><div class="rating-buttons">${[['review','需要复习'],['basic','基本掌握'],['fluent','熟练表达']].map(([v,t])=>`<button data-rating="${v}" data-rating-id="${q.id}" aria-pressed="${e?.rating===v}" class="${e?.rating===v?'active':''}" ${e?.submitted?.trim()?'':'disabled'}>${t}</button>`).join('')}</div>${e?.submitted?.trim()?'':'<span class="muted">先保存你的作答，再进行自评。</span>'}</div>`:''}</div></details>`;
+  const e=state.entries[q.id];return `<details class="answer-details" ${open?'open':''}><summary>参考答案与易错点<span class="expand" aria-hidden="true">+</span></summary><div class="answer-content">${q.answerMarkdown?`<div class="markdown">${markdown(q.answerMarkdown)}</div>`:`<ol class="answer-points">${q.answer.map(a=>`<li>${esc(a)}</li>`).join('')}</ol><div class="pitfalls"><h3>易错点</h3><ul>${q.pitfalls.map(a=>`<li>${esc(a)}</li>`).join('')}</ul></div><div class="follow"><h3>面试追问</h3><p>${esc(q.follow)}</p></div>`}${q.project==='云盘'?`<a class="source" href="https://github.com/qzshen219-pixel/distributed-cloud-disk/blob/main/${esc(q.sourceFile)}" target="_blank" rel="noopener noreferrer">核对云盘源码 · ${esc(q.sourceFile.split('/').pop())}</a>`:''}${info[q.module].source?`<a class="source" href="${info[q.module].source}" target="_blank" rel="noopener noreferrer">延伸阅读 · ${esc(info[q.module].label)}</a>`:''}${practice?`<div class="self-eval"><span>对照答案后，标记本题掌握程度</span><div class="rating-buttons">${[['review','需要复习'],['basic','基本掌握'],['fluent','熟练表达']].map(([v,t])=>`<button data-rating="${v}" data-rating-id="${q.id}" aria-pressed="${e?.rating===v}" class="${e?.rating===v?'active':''}" ${e?.submitted?.trim()?'':'disabled'}>${t}</button>`).join('')}</div>${e?.submitted?.trim()?'':'<span class="muted">先保存你的作答，再进行自评。</span>'}</div>`:''}</div></details>`;
 }
 function renderPractice(){
   const list=filtered();if(!list.some(q=>q.id===state.current))state.current=list[0]?.id||null;
@@ -128,7 +130,7 @@ function renderPractice(){
 }
 function renderExamSetup(){
   const list=filtered(),n=Math.min(10,list.length);
-  $('question').innerHTML=`<div class="exam-setup"><div class="exam-kicker">SELF CHECK / 01</div><h2>用 ${n} 道题，检查理解。</h2><p>从当前模块和题型中随机抽题。基础题选择最准确的判断；每日开放题写下回答。交卷后，单选题显示得分，文字题对照参考答案自评。</p><div class="exam-info"><div><strong>${n}</strong><span>本轮题数</span></div><div><strong>${list.length}</strong><span>可选题目</span></div><div><strong>不限时</strong><span>先理解，再判断</span></div></div><button class="primary" id="start-exam" ${n?'':'disabled'}>开始本轮自测</button><div class="exam-intro-note">当前范围：${esc(state.module)} / ${state.type==='全部'?'全部题型':esc(state.type)} / ${esc(state.source==='全部'?'全部来源':state.source==='基础'?'基础题库':state.source==='每日'?'全部每日练习':state.source)}。少于十题时使用全部匹配题目。</div></div>`;
+  $('question').innerHTML=`<div class="exam-setup"><div class="exam-kicker">SELF CHECK / 01</div><h2>用 ${n} 道题，检查理解。</h2><p>从当前模块和题型中随机抽题。基础题选择最准确的判断；开放题写下回答。交卷后，单选题显示得分，文字题对照参考答案自评。</p><div class="exam-info"><div><strong>${n}</strong><span>本轮题数</span></div><div><strong>${list.length}</strong><span>可选题目</span></div><div><strong>不限时</strong><span>先理解，再判断</span></div></div><button class="primary" id="start-exam" ${n?'':'disabled'}>开始本轮自测</button><div class="exam-intro-note">当前范围：${esc(state.project==='全部'?'全部项目':state.project)} / ${esc(state.module)} / ${state.type==='全部'?'全部题型':esc(state.type)} / ${esc(state.source==='全部'?'全部来源':state.source==='基础'?'基础题库':state.source==='每日'?'全部每日练习':state.source)}。少于十题时使用全部匹配题目。</div></div>`;
 }
 function renderExam(){
   const ex=state.exam;if(!ex){renderExamSetup();return;}
@@ -143,14 +145,15 @@ function renderExam(){
   $('question').innerHTML=(ex.submitted?`<div class="score-banner"><strong>${objective?`${getScore(ex)} / ${objective}`:`已答 ${manual} 题`}</strong><span>本轮自测已完成<br>${objective?`单选题答对 ${getScore(ex)} 题`:'文字题不自动判分'}${manual?` · ${ex.ids.filter(id=>byId.get(id).manual&&!state.entries[id]?.rating).length} 道文字题待自评`:''}</span></div>`:'')+questionHeader(q,ex.index,ex.ids.length)+body+`<div class="question-nav"><button class="secondary" data-nav="-1" ${ex.index===0?'disabled':''}>上一题</button><span>${ex.submitted?'逐题回顾':'已作答'} ${ex.submitted?ex.index+1:n} / ${ex.ids.length}</span><button class="secondary" data-nav="1" ${ex.index===ex.ids.length-1?'disabled':''}>下一题</button></div><div class="exam-controls"><button class="text-button" id="return-practice">${ex.submitted?'返回逐题练习':'退出本轮自测'}</button>${ex.submitted?'<button class="primary" id="retry-exam">重新抽题自测</button>':`<span>交卷前可修改作答</span><button class="primary" id="submit-exam">交卷并查看解析</button>`}</div>`;
 }
 function renderDetail(){state.mode==='practice'?renderPractice():renderExam();}
-function render(){renderModules();if($('question-search').value!==state.query)$('question-search').value=state.query;$('status-filter').value=state.status;$('question-search').disabled=Boolean(activeExam());$('status-filter').disabled=Boolean(activeExam());$('clear-all-filter').disabled=Boolean(activeExam())||(state.module==='全部'&&state.type==='全部'&&state.source==='全部'&&!state.query&&state.status==='all');$('source-filter').value=state.source;$('source-filter').disabled=Boolean(activeExam());$('type-filter').value=state.type;$('type-filter').disabled=Boolean(activeExam());$('filter-count').textContent=`${filtered().length} 题`;$('mobile-filter-toggle').textContent=`筛选 · ${filtered().length} 题`;$('mobile-filter-toggle').disabled=Boolean(activeExam());$('practice-tab').setAttribute('aria-selected',state.mode==='practice');$('exam-tab').setAttribute('aria-selected',state.mode==='exam');$('practice-tab').tabIndex=state.mode==='practice'?0:-1;$('exam-tab').tabIndex=state.mode==='exam'?0:-1;$('workspace').setAttribute('aria-labelledby',state.mode==='practice'?'practice-tab':'exam-tab');renderDetail();renderList();syncStats();persist();}
-function configure(module,type,source=state.source,query=state.query,status=state.status){
+function render(){renderModules();if($('question-search').value!==state.query)$('question-search').value=state.query;$('status-filter').value=state.status;$('question-search').disabled=Boolean(activeExam());$('status-filter').disabled=Boolean(activeExam());$('clear-all-filter').disabled=Boolean(activeExam())||(state.project==='全部'&&state.module==='全部'&&state.type==='全部'&&state.source==='全部'&&!state.query&&state.status==='all');$('project-filter').value=state.project;$('project-filter').disabled=Boolean(activeExam());$('source-filter').value=state.source;$('source-filter').disabled=Boolean(activeExam());$('type-filter').value=state.type;$('type-filter').disabled=Boolean(activeExam());$('filter-count').textContent=`${filtered().length} 题`;$('mobile-filter-toggle').textContent=`筛选 · ${filtered().length} 题`;$('mobile-filter-toggle').disabled=Boolean(activeExam());$('practice-tab').setAttribute('aria-selected',state.mode==='practice');$('exam-tab').setAttribute('aria-selected',state.mode==='exam');$('practice-tab').tabIndex=state.mode==='practice'?0:-1;$('exam-tab').tabIndex=state.mode==='exam'?0:-1;$('workspace').setAttribute('aria-labelledby',state.mode==='practice'?'practice-tab':'exam-tab');renderDetail();renderList();syncStats();persist();}
+function configure(module,type,source=state.source,query=state.query,status=state.status,project=state.project){
   if(activeExam())throw new Error('请先完成或退出本轮自测。');
   if(module!=='全部'&&!info[module])throw new Error('无效模块。');
   if(!['全部','概念题','场景题','代码题'].includes(type))throw new Error('无效题型。');
   if(!['全部','基础','每日',...dates].includes(source))throw new Error('无效来源。');
+  if(!['全部','IM','云盘','通用'].includes(project))throw new Error('无效项目。');
   if(typeof query!=='string'||query.length>120||!['all','pending','answered','review'].includes(status))throw new Error('无效的搜索或状态。');
-  visibleCount=60;state.module=module;state.type=type;state.source=source;state.query=query;state.status=status;if(state.mode==='exam')state.exam=null;render();return {count:filtered().length,module,type,source,query,status};
+  visibleCount=60;state.module=module;state.type=type;state.source=source;state.query=query;state.status=status;state.project=project;if(state.mode==='exam')state.exam=null;render();return {count:filtered().length,module,type,source,query,status,project};
 }
 function saveAnswer(id,text){
   if(!byId.has(id)||typeof text!=='string'||!text.trim()||text.length>10000)throw new Error('请填写有效回答，最多 10000 字符。');
@@ -179,6 +182,7 @@ function setMode(mode){
   state.mode=mode;render();
 }
 $('modules').addEventListener('click',event=>{const button=event.target.closest('[data-module]');if(button&&!button.disabled)configure(button.dataset.module,state.type);});
+$('project-filter').addEventListener('change',()=>configure('全部','全部','全部','','all',$('project-filter').value));
 $('type-filter').addEventListener('change',()=>configure(state.module,$('type-filter').value));
 $('source-filter').addEventListener('change',()=>configure(state.module,state.type,$('source-filter').value));
 $('question-search').addEventListener('input',()=>configure(state.module,state.type,state.source,$('question-search').value));
@@ -213,8 +217,8 @@ render();if(!storageOK)notify('当前浏览器无法读取已存进度，将从�
 const context=document.modelContext;
 if(context?.registerTool){
   const lifecycle=new AbortController();const register=tool=>{try{Promise.resolve(context.registerTool(tool,{signal:lifecycle.signal})).catch(()=>{});}catch{}};
-  register({name:'read_practice_progress',description:'读取当前标签页的练习完成情况和最近自测结果。',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true},execute:()=>({total:bank.length,completed:completedIds().length,needsReview:bank.filter(q=>needsReview(q.id)).map(q=>q.id),module:state.module,type:state.type,source:state.source,query:state.query,status:state.status,lastTest:state.lastTest})});
-  register({name:'filter_practice_questions',description:'按模块、来源、关键词和练习状态筛选题目；自测进行中不能改变范围。',inputSchema:{type:'object',properties:{module:{type:'string',enum:['全部',...Object.keys(info)]},type:{type:'string',enum:['全部','概念题','场景题','代码题']},source:{type:'string',enum:['全部','基础','每日',...dates]},query:{type:'string',maxLength:120},status:{type:'string',enum:['all','pending','answered','review']}},required:['module','type'],additionalProperties:false},annotations:{readOnlyHint:false},execute:input=>{if(!input||typeof input.module!=='string'||typeof input.type!=='string')throw new Error('模块和题型为必填项。');return configure(input.module,input.type,input.source||state.source,input.query??state.query,input.status||state.status);}});
+  register({name:'read_practice_progress',description:'读取当前标签页的练习完成情况和最近自测结果。',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true},execute:()=>({total:bank.length,completed:completedIds().length,needsReview:bank.filter(q=>needsReview(q.id)).map(q=>q.id),module:state.module,type:state.type,source:state.source,project:state.project,query:state.query,status:state.status,lastTest:state.lastTest})});
+  register({name:'filter_practice_questions',description:'按项目、模块、来源、关键词和练习状态筛选题目；自测进行中不能改变范围。',inputSchema:{type:'object',properties:{module:{type:'string',enum:['全部',...Object.keys(info)]},type:{type:'string',enum:['全部','概念题','场景题','代码题']},source:{type:'string',enum:['全部','基础','每日',...dates]},project:{type:'string',enum:['全部','IM','云盘','通用']},query:{type:'string',maxLength:120},status:{type:'string',enum:['all','pending','answered','review']}},required:['module','type'],additionalProperties:false},annotations:{readOnlyHint:false},execute:input=>{if(!input||typeof input.module!=='string'||typeof input.type!=='string')throw new Error('模块和题型为必填项。');return configure(input.module,input.type,input.source||state.source,input.query??state.query,input.status||state.status,input.project||state.project);}});
   register({name:'save_practice_answer',description:'保存指定题目的文字作答到本次练习，并更新进度；不会自动判分。',inputSchema:{type:'object',properties:{questionId:{type:'string'},answer:{type:'string',minLength:1,maxLength:10000}},required:['questionId','answer'],additionalProperties:false},annotations:{readOnlyHint:false,untrustedContentHint:true},execute:input=>{if(!input)throw new Error('缺少作答。');return saveAnswer(input.questionId,input.answer);}});
   window.addEventListener('pagehide',()=>lifecycle.abort(),{once:true});
 }

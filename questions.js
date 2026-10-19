@@ -64,6 +64,6 @@ window.MODULE_INFO = {
   'MySQL': {short:'SQL',sub:'索引 · 事务 · 幂等',source:'https://dev.mysql.com/doc/refman/8.4/en/',label:'MySQL 8.4 官方手册'},
   'Redis': {short:'RDS',sub:'缓存 · 锁 · 消息',source:'https://redis.io/docs/latest/',label:'Redis 官方文档'},
   'Nginx': {short:'NGX',sub:'代理 · 均衡 · 502 排查',source:'https://nginx.org/en/docs/',label:'Nginx 官方文档'},
-  '项目追问': {short:'IM',sub:'你的分布式 IM 项目',source:null,label:'面试场景与设计思路'}
+  '项目追问': {short:'项目',sub:'IM · 云盘 · 通用工程',source:null,label:'面试场景与设计思路'}
 };
 })();
