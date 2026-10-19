@@ -11,17 +11,37 @@ let visibleCount=60,localStore,sessionStore;
 try{localStore=window.localStorage;}catch{}try{sessionStore=window.sessionStorage;}catch{}
 const fresh=()=>C.fresh(bank),restored=C.load(bank,localStore,sessionStore);
 let state=restored.state,storageOK=true,toastTimer,confirmAction,receivingStorage=false;
+let saveTimer=null,pendingSave=false,pendingHub=false,lastStoredRaw=null;
 let listExpanded=false,filtersExpanded=state.project!=='全部'||state.module!=='全部'||state.type!=='全部'||state.source!=='全部'||Boolean(state.query)||state.status!=='all';
 function setListExpanded(on){listExpanded=on;document.documentElement?.classList.toggle('questions-open',on);$('mobile-list-toggle').setAttribute('aria-expanded',on);$('mobile-list-toggle').textContent=`${on?'收起':'展开'}列表 · ${listQuestions().length}`;}
 function setFiltersExpanded(on){filtersExpanded=on;document.documentElement?.classList.toggle('filters-open',on);$('mobile-filter-toggle').setAttribute('aria-expanded',on);}
 setListExpanded(false);setFiltersExpanded(filtersExpanded);
 function notify(message){clearTimeout(toastTimer);$('toast').textContent=message;$('toast').classList.add('visible');toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),3200);}
-function persist(){
+function saveLabels(){
+ const status=$('storage-status');if(status){status.textContent=pendingSave?'正在保存最新输入…':storageOK?'学习记录已自动保存在此设备':'自动保存未成功，请先导出备份';status.classList.toggle('storage-warning',!storageOK);}
+ if($('note-save-status'))$('note-save-status').textContent=pendingSave?'笔记正在保存…':storageOK?'笔记已自动保存到本机':'尚未保存成功，请导出备份';
+ if($('draft')&&$('save-status'))$('save-status').textContent=pendingSave?'草稿正在保存…':!storageOK?'草稿尚未保存成功，请导出备份':state.entries[state.current]?.submitted===$('draft').value&&$('draft').value?'已保存作答':'草稿已自动保存，点击保存作答后计入进度';
+}
+function queuePersist(refreshHub=false){
+ pendingSave=true;pendingHub=pendingHub||refreshHub;clearTimeout(saveTimer);saveLabels();
+ saveTimer=setTimeout(()=>persist({refreshHub:pendingHub}),300);
+}
+function flush(){if(pendingSave)persist({refreshHub:pendingHub});}
+function persist({refreshHub=true}={}){
  if(receivingStorage)return;
- try{localStore.setItem(key,JSON.stringify(state));storageOK=true;}
+ clearTimeout(saveTimer);saveTimer=null;refreshHub=refreshHub||pendingHub;pendingSave=false;pendingHub=false;
+ let resetReceived=false;
+ try{
+  const sharedRaw=localStore.getItem(key);
+  if(sharedRaw&&sharedRaw!==lastStoredRaw){
+   try{const incoming=JSON.parse(sharedRaw);if(incoming?.version===2){resetReceived=(incoming.resetAt||0)>(state.resetAt||0);state=C.sync(state,incoming,bank);}}catch{}
+  }
+  const raw=JSON.stringify(state);localStore.setItem(key,raw);lastStoredRaw=raw;storageOK=true;
+  try{sessionStore?.removeItem(key);sessionStore?.removeItem(C.LEGACY_KEY);}catch{}
+ }
  catch{storageOK=false;try{sessionStore?.setItem(key,JSON.stringify(state));}catch{}}
- const status=$('storage-status');if(status){status.textContent=storageOK?'学习记录已自动保存在此设备':'自动保存未成功，请先导出备份';status.classList.toggle('storage-warning',!storageOK);}
- document.dispatchEvent(new CustomEvent('study:change',{detail:{storageOK}}));
+ if(resetReceived){receivingStorage=true;try{render();}finally{receivingStorage=false;}notify('另一页面已重置学习记录，当前页面已同步。');refreshHub=true;}
+ saveLabels();document.dispatchEvent(new CustomEvent('study:change',{detail:{storageOK,refreshHub}}));
 }
 
 function isCompleted(id){return C.isCompleted(state,id);}
@@ -216,10 +236,10 @@ function submitExam(auto=false){
  state.lastTest={correct:getScore(ex),total,manual,answered:Object.keys(ex.answers).length,at:now};
  for(const id of ex.ids){
   const q=byId.get(id),answered=!unanswered(id);
-  if(q.manual){if(answered)C.submitAnswer(state,id,ex.answers[id],now);else{const c=C.card(state,id);c.lastResult='missed';c.review=C.schedule(c.review,'review',now);c.updatedAt=now;}}
+  if(q.manual){if(answered)C.submitAnswer(state,id,ex.answers[id],now);else C.editCard(state,id,{lastResult:'missed',review:C.schedule(C.card(state,id).review,'review',now)},now);}
   else{
-   const pass=ex.answers[id]===q.correct,c=C.card(state,id);c.lastResult=answered?(pass?'correct':'wrong'):'missed';c.updatedAt=now;
-   if(answered){state.outcomes[id]=pass;C.rate(state,id,pass?'basic':'review',now,true);}else c.review=C.schedule(c.review,'review',now);
+   const pass=ex.answers[id]===q.correct,c=C.editCard(state,id,{lastResult:answered?(pass?'correct':'wrong'):'missed'},now);
+   if(answered){state.outcomes[id]=pass;C.rate(state,id,pass?'basic':'review',now,true);}else C.editCard(state,id,{review:C.schedule(c.review,'review',now)},now);
   }
  }
  render();notify(auto?'时间已到，已自动交卷；未答题保留为未作答。':total?`自测完成：单选题答对 ${getScore(ex)} / ${total}，文字题 ${manual} 道采用自评。`:`已完成 ${manual} 道文字题，请对照答案自评。`);
@@ -245,16 +265,18 @@ for(const mode of ['practice','exam','interview'])$(mode+'-tab').addEventListene
 document.querySelector('.mode-tabs').addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();const modes=['practice','exam','interview'],mode=modes[(modes.indexOf(state.mode)+(event.key==='ArrowRight'?1:2))%3];setMode(mode);if(state.mode===mode)$(mode+'-tab').focus();}});
 $('question-items').addEventListener('click',event=>{const round=event.target.closest('[data-round]');if(round&&state.mode==='interview'&&state.interview){state.interview.index=Number(round.dataset.round);renderDetail();renderList();revealActive();persist();return;}const more=event.target.closest('#load-more');if(more?.id==='load-more'){visibleCount+=60;renderList();return;}const button=event.target.closest('[data-q]');if(!button)return;if(state.mode==='exam'&&state.exam)state.exam.index=state.exam.ids.indexOf(button.dataset.q);else state.current=button.dataset.q;renderDetail();renderList();revealActive();persist();});
 $('question').addEventListener('input',event=>{
- if(event.target.dataset.noteId){const c=C.card(state,event.target.dataset.noteId);c.note=event.target.value.slice(0,5000);c.updatedAt=Date.now();persist();if($('note-save-status'))$('note-save-status').textContent=storageOK?'笔记已自动保存到本机':'尚未保存成功，请导出备份';return;}
- if(event.target.id==='interview-draft'&&activeInterview()){state.interview.answers[state.interview.index]=event.target.value.slice(0,10000);state.interview.updatedAt=Date.now();state.updatedAt=Date.now();persist();renderList();return;}
- if(event.target.id==='exam-draft'&&activeExam()){const id=state.exam.ids[state.exam.index];if(event.target.value.trim())state.exam.answers[id]=event.target.value;else delete state.exam.answers[id];persist();renderList();return;}if(event.target.id!=='draft')return;entry(state.current).draft=event.target.value;entry(state.current).updatedAt=Date.now();persist();$('char-count').textContent=`${event.target.value.length} / 10000 字符`;$('save-status').textContent=entry(state.current).submitted===event.target.value&&event.target.value?'已保存作答':'草稿已自动保存，点击保存作答后计入进度';});
+ if(event.target.dataset.noteId){const id=event.target.dataset.noteId,hadNote=Boolean(C.card(state,id).note.trim()),note=event.target.value.slice(0,5000);C.editCard(state,id,{note});queuePersist(hadNote!==Boolean(note.trim()));return;}
+ if(event.target.id==='interview-draft'&&activeInterview()){const iv=state.interview,wasAnswered=Boolean(iv.answers[iv.index]?.trim());iv.answers[iv.index]=event.target.value.slice(0,10000);iv.updatedAt=Date.now();state.updatedAt=Date.now();queuePersist();if(wasAnswered!==Boolean(iv.answers[iv.index].trim()))renderList();return;}
+ if(event.target.id==='exam-draft'&&activeExam()){const id=state.exam.ids[state.exam.index],wasAnswered=Boolean(state.exam.answers[id]?.trim());if(event.target.value.trim())state.exam.answers[id]=event.target.value;else delete state.exam.answers[id];queuePersist();if(wasAnswered!==Boolean(state.exam.answers[id]?.trim()))renderList();return;}
+ if(event.target.id!=='draft')return;entry(state.current).draft=event.target.value;entry(state.current).updatedAt=Date.now();queuePersist();$('char-count').textContent=`${event.target.value.length} / 10000 字符`;
+});
 $('question').addEventListener('change',event=>{if(event.target.classList.contains('exam-option')){try{state.examOptions=getExamOptions();persist();}catch{}return;}if(event.target.name!=='exam-choice'||!activeExam())return;const chosen=Number(event.target.value);state.exam.answers[state.exam.ids[state.exam.index]]=chosen;persist();renderExam();renderList();$('question').querySelector(`input[name="exam-choice"][value="${chosen}"]`)?.focus({preventScroll:true});});
 $('question').addEventListener('click',event=>{
   const button=event.target.closest('button');if(!button||button.disabled)return;
   if(button.dataset.copyCode!==undefined){copyCode(button);return;}
   if(button.dataset.nav){const delta=Number(button.dataset.nav);if(state.mode==='exam'&&state.exam)state.exam.index=Math.max(0,Math.min(state.exam.ids.length-1,state.exam.index+delta));else {const list=filtered(),i=list.findIndex(q=>q.id===state.current);state.current=list[Math.max(0,Math.min(list.length-1,i+delta))].id;}renderDetail();renderList();revealActive();persist();}
   if(button.id==='save-answer'){try{saveAnswer(state.current,$('draft').value);notify(state.status==='pending'?'作答已保存，并移出未作答列表。可在已作答中查看解析和自评。':'作答已保存，可以展开解析并标记掌握程度。');}catch(error){notify(error.message);$('draft')?.focus();}}
-  if(button.dataset.favorite){const id=button.dataset.favorite,c=C.card(state,id);c.favorite=!c.favorite;c.updatedAt=Date.now();button.setAttribute('aria-pressed',c.favorite);button.textContent=c.favorite?'★ 已收藏':'☆ 收藏';persist();notify(c.favorite?'已加入收藏夹。':'已取消收藏。');if(state.status==='favorite'&&!c.favorite)render();return;}
+  if(button.dataset.favorite){const id=button.dataset.favorite,c=C.editCard(state,id,{favorite:!C.card(state,id).favorite});button.setAttribute('aria-pressed',c.favorite);button.textContent=c.favorite?'★ 已收藏':'☆ 收藏';persist();notify(c.favorite?'已加入收藏夹。':'已取消收藏。');if(state.status==='favorite'&&!c.favorite)render();return;}
   if(button.dataset.rating){
    const id=button.dataset.ratingId||state.current,e=state.entries[id];if(!e?.submitted?.trim())return;
    const expanded=$('question').querySelector('.answer-details')?.open;
@@ -279,13 +301,13 @@ $('question').addEventListener('click',event=>{
   if(button.id==='return-practice')setMode('practice');
   if(button.id==='clear-filter')clearFilters();
 });
-$('reset').addEventListener('click',()=>confirm('重置本机学习记录？','这会清除本机的作答、收藏、笔记、复习安排和面试记录。建议先在“学习备份”中导出备份。',()=>{state=fresh();visibleCount=60;setFiltersExpanded(false);setListExpanded(false);render();notify('本机学习记录已重置。');}));
+$('reset').addEventListener('click',()=>confirm('重置本机学习记录？','这会清除本机的作答、收藏、笔记、复习安排和面试记录，并同步到此浏览器的其他页面。建议先导出备份。',()=>{state=C.reset(bank,state);visibleCount=60;setFiltersExpanded(false);setListExpanded(false);render();notify('本机学习记录已重置。');}));
 $('cancel-dialog').addEventListener('click',()=>{$('confirm-dialog').close();confirmAction=null;});$('confirm-dialog-action').addEventListener('click',()=>{const action=confirmAction;confirmAction=null;$('confirm-dialog').close();action?.();});$('confirm-dialog').addEventListener('cancel',()=>{confirmAction=null;});
 const motionPreferenceKey='cpp-interview-motion-v1',reducedMotion=window.matchMedia?.('(prefers-reduced-motion: reduce)');let motionEnabled=true;
 try{motionEnabled=localStorage.getItem(motionPreferenceKey)!=='off';}catch{}
 function applyMotion(){const on=motionEnabled&&!reducedMotion?.matches;document.documentElement?.classList.toggle('motion-paused',!on);$('motion-toggle').setAttribute('aria-pressed',on);$('motion-toggle').disabled=Boolean(reducedMotion?.matches);$('motion-label').textContent=reducedMotion?.matches?'静态背景 · 系统设置':on?'动态背景已开启':'动态背景已暂停';}
 $('motion-toggle').addEventListener('click',()=>{motionEnabled=!motionEnabled;try{localStorage.setItem(motionPreferenceKey,motionEnabled?'on':'off');}catch{}applyMotion();});reducedMotion?.addEventListener?.('change',applyMotion);document.addEventListener?.('visibilitychange',()=>document.documentElement?.classList.toggle('page-idle',document.hidden));applyMotion();
-window.PracticeApp={bank,info,C,get state(){return state;},get storageOK(){return storageOK;},persist,render,notify,confirm,setMode,activeAssessment,filtered,
+window.PracticeApp={bank,info,C,get state(){return state;},get storageOK(){return storageOK;},persist,flush,render,notify,confirm,setMode,activeAssessment,filtered,
  openScope(status,date){if(activeAssessment()){notify('请先完成或退出当前自测或项目面试。');return;}state.mode='practice';if(date)state.reviewDate=date;configure('全部','全部','全部','',status,'全部');setListExpanded(false);revealActive();},
  openQuestion(id){if(!byId.has(id)||activeAssessment())return;state.mode='practice';configure('全部','全部','全部','','all','全部');state.current=id;render();revealActive();},
  mergeImport(incoming){if(activeAssessment())throw Error('请先结束当前自测或项目面试，再导入学习记录。');state=C.merge(state,incoming,bank);render();},
@@ -300,9 +322,19 @@ function tick(){
 }
 window.addEventListener('storage',event=>{
  if(event.key!==key||!event.newValue)return;
- try{const incoming=JSON.parse(event.newValue);if(incoming?.version!==2)return;state=C.merge(state,incoming,bank);receivingStorage=true;if(!['TEXTAREA','INPUT'].includes(document.activeElement?.tagName))render();else syncStats();receivingStorage=false;document.dispatchEvent(new CustomEvent('study:change',{detail:{storageOK}}));}catch{receivingStorage=false;}
+ try{
+  const incoming=JSON.parse(event.newValue);if(incoming?.version!==2)return;
+  const resetReceived=(incoming.resetAt||0)>(state.resetAt||0),staleReset=(incoming.resetAt||0)<(state.resetAt||0);
+  state=C.sync(state,incoming,bank);lastStoredRaw=event.newValue;
+  if(resetReceived){clearTimeout(saveTimer);pendingSave=false;pendingHub=false;}
+  receivingStorage=true;try{if(resetReceived||!['TEXTAREA','INPUT'].includes(document.activeElement?.tagName))render();else syncStats();}finally{receivingStorage=false;}
+  saveLabels();document.dispatchEvent(new CustomEvent('study:change',{detail:{storageOK}}));
+  if(resetReceived)notify('另一页面已重置学习记录，当前页面已同步。');
+  if(staleReset)persist();
+ }catch{receivingStorage=false;}
 });
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick();});
+window.addEventListener('pagehide',flush);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)flush();else tick();});
 render();tick();setInterval(tick,1000);
 if(restored.migrated)notify('已将当前标签页的旧学习记录迁移到长期保存。');else if(restored.invalid)notify('部分旧记录无法读取。当前仍可练习，也可导入学习备份恢复。');
 if(!storageOK)notify('自动保存未成功，请使用“学习备份”导出当前记录。');

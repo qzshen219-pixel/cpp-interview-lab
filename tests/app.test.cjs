@@ -28,7 +28,7 @@ test('full current bank boots with all seven modules, projects and learning tool
 });
 test('answer, self-evaluation, favorite, note and current position survive a new tab without session data',t=>{
  const b=boot();t.after(b.close);b.value('#draft','对象本身的并发访问仍需同步。','input');b.click('#save-answer');b.click('[data-rating="basic"]');b.click('[data-favorite]');b.value('#personal-note','</textarea><img src=x onerror=alert(1)>','input');
- const id=b.state().current,stored=b.stored(),c=boot({local:stored});t.after(c.close);
+ b.app.flush();const id=b.state().current,stored=b.stored(),c=boot({local:stored});t.after(c.close);
  assert.equal(c.state().current,id);assert.equal(c.state().entries[id].submitted,'对象本身的并发访问仍需同步。');assert.equal(c.state().cards[id].favorite,true);assert.equal(c.state().cards[id].note,'</textarea><img src=x onerror=alert(1)>');assert.equal(c.$('#personal-note').value,'</textarea><img src=x onerror=alert(1)>');assert.equal(c.$('#question img'),null);assert.equal(c.$('#completed').textContent,'1');assert.equal(c.$('#favorite-total').textContent,'1');
 });
 test('legacy session migration immediately persists a durable copy',t=>{
@@ -71,7 +71,7 @@ test('written tests keep partial drafts and expire without fabricating answers o
 test('project interview resumes across a new tab, keeps follow-ups and produces a reusable review',t=>{
  const b=boot();t.after(b.close);b.click('#interview-tab');b.value('#interview-project','云盘');b.value('#interview-count','5');b.value('#interview-minutes','0');b.click('#start-interview');assert.equal(b.state().interview.rounds.length,5);assert.equal(b.$('.answer-details'),null);
  b.value('#interview-draft','云盘主问题回答','input');b.click('[data-interview-nav="1"]');assert.equal(b.state().interview.rounds[1].stage,'follow');b.value('#interview-draft','进一步说明并发和异常边界','input');
- const c=boot({local:b.stored()});t.after(c.close);assert.equal(c.state().mode,'interview');assert.equal(c.$('#interview-draft').value,'进一步说明并发和异常边界');c.click('#finish-interview');assert.equal(c.$('#confirm-dialog').open,true);c.click('#confirm-dialog-action');assert.equal(c.state().interview.submitted,true);assert.equal(c.state().interviewHistory.length,1);assert.ok(c.$('.answer-details').open);c.click('[data-interview-rating="basic"]');const id=c.state().interview.rounds[1].id;assert.ok(c.state().cards[id].review);assert.equal(c.state().interviewHistory[0].ratings[1],'basic');assert.equal(c.$('#completed').textContent,'1');
+ b.app.flush();const c=boot({local:b.stored()});t.after(c.close);assert.equal(c.state().mode,'interview');assert.equal(c.$('#interview-draft').value,'进一步说明并发和异常边界');c.click('#finish-interview');assert.equal(c.$('#confirm-dialog').open,true);c.click('#confirm-dialog-action');assert.equal(c.state().interview.submitted,true);assert.equal(c.state().interviewHistory.length,1);assert.ok(c.$('.answer-details').open);c.click('[data-interview-rating="basic"]');const id=c.state().interview.rounds[1].id;assert.ok(c.state().cards[id].review);assert.equal(c.state().interviewHistory[0].ratings[1],'basic');assert.equal(c.$('#completed').textContent,'1');
  c.click('#new-interview');assert.ok(c.$('[data-history]'));c.click('[data-history]');assert.equal(c.state().interview.answers[1],'进一步说明并发和异常边界');
 });
 test('timed project interviews save partial transcripts when time expires',t=>{
@@ -93,4 +93,43 @@ test('rating a due question never reveals the next question answer automatically
  const b=boot();t.after(b.close);const ids=b.app.bank.slice(0,2).map(q=>q.id);
  for(const id of ids){b.app.C.submitAnswer(b.state(),id,'之前的作答',NOW-1000000);b.app.C.rate(b.state(),id,'review',NOW-1000000);}
  b.app.persist();b.click('[data-scope="due"]');assert.equal(b.$('#list-title').textContent,'到期复习');const previous=b.state().current;b.click('.answer-details summary');assert.equal(b.$('.answer-details').open,true);b.click('[data-rating="basic"]');assert.notEqual(b.state().current,previous);assert.equal(b.$('.answer-details').open,false);
+});
+
+test('reset propagates across open pages and cancels pending stale drafts',async t=>{
+ const a=boot();t.after(a.close);a.value('#draft','重置前的回答','input');a.click('#save-answer');
+ const b=boot({local:a.stored()});t.after(b.close);b.value('#draft','另一个页面的待保存内容','input');
+ a.click('#reset');a.click('#confirm-dialog-action');const resetRaw=a.stored();
+ b.w.localStorage.setItem(b.app.C.KEY,resetRaw);b.w.dispatchEvent(new b.w.StorageEvent('storage',{key:b.app.C.KEY,newValue:resetRaw}));
+ assert.equal(Object.values(b.state().entries).filter(e=>e.submitted||e.draft).length,0);assert.match(b.$('#toast').textContent,/另一页面已重置/);
+ await new Promise(resolve=>setTimeout(resolve,350));
+ assert.equal(Object.values(JSON.parse(b.stored()).entries).filter(e=>e.submitted||e.draft).length,0);
+ b.click('[data-favorite]');assert.equal(Object.values(JSON.parse(b.stored()).entries).filter(e=>e.submitted||e.draft).length,0);
+});
+test('a suspended page checks the durable reset before its next write even without a storage event',t=>{
+ const a=boot();t.after(a.close);a.value('#draft','旧答案','input');a.click('#save-answer');const b=boot({local:a.stored()});t.after(b.close);
+ a.click('#reset');a.click('#confirm-dialog-action');b.w.localStorage.setItem(b.app.C.KEY,a.stored());
+ b.value('#draft','暂停后继续输入的旧草稿','input');b.app.flush();
+ assert.equal(Object.values(b.state().entries).filter(e=>e.submitted||e.draft).length,0);assert.equal(b.$('#draft').value,'');
+});
+test('independent edits from another page preserve the note currently being typed',t=>{
+ const b=boot();t.after(b.close);const id=b.state().current,incoming=b.app.C.clone(b.state());
+ b.$('#personal-note').focus();b.value('#personal-note','本页正在输入的笔记','input');
+ b.app.C.editCard(incoming,id,{favorite:true},NOW+1000);const raw=JSON.stringify(incoming);b.w.localStorage.setItem(b.app.C.KEY,raw);
+ b.w.dispatchEvent(new b.w.StorageEvent('storage',{key:b.app.C.KEY,newValue:raw}));b.app.flush();
+ assert.equal(b.state().cards[id].favorite,true);assert.equal(b.state().cards[id].note,'本页正在输入的笔记');assert.equal(b.$('#personal-note').value,'本页正在输入的笔记');
+});
+test('rapid typing batches writes and preserves the calendar DOM and keyboard focus',async t=>{
+ const b=boot();t.after(b.close);let writes=0;const original=b.w.Storage.prototype.setItem;
+ b.w.Storage.prototype.setItem=function(k,v){if(k===b.app.C.KEY)writes++;return original.call(this,k,v);};
+ const calendar=b.$('#review-calendar').firstElementChild,mastery=b.$('#mastery-list').firstElementChild;
+ b.$('#draft').focus();for(let i=1;i<=20;i++)b.value('#draft','连续输入'.repeat(i),'input');
+ assert.equal(writes,0);assert.match(b.$('#save-status').textContent,/正在保存/);
+ await new Promise(resolve=>setTimeout(resolve,350));
+ assert.equal(writes,1);assert.equal(JSON.parse(b.stored()).entries[b.state().current].draft,'连续输入'.repeat(20));
+ assert.equal(b.$('#review-calendar').firstElementChild,calendar);assert.equal(b.$('#mastery-list').firstElementChild,mastery);assert.equal(b.w.document.activeElement,b.$('#draft'));assert.match(b.$('#save-status').textContent,/已自动保存/);
+});
+test('page hide immediately flushes the latest note and draft before leaving',t=>{
+ const b=boot();t.after(b.close);b.value('#draft','切后台前的最后一句','input');b.value('#personal-note','切后台前的笔记','input');
+ b.w.dispatchEvent(new b.w.Event('pagehide'));const saved=JSON.parse(b.stored()),id=b.state().current;
+ assert.equal(saved.entries[id].draft,'切后台前的最后一句');assert.equal(saved.cards[id].note,'切后台前的笔记');assert.equal(b.$('#notes-total').textContent,'1');
 });

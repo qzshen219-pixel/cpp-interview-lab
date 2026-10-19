@@ -1,35 +1,76 @@
 'use strict';
-const VERSION='20261019.1';
+const VERSION='20261019.2';
 const BASE=self.registration.scope;
 const PREFIX='cpp-interview-offline:'+new URL(BASE).pathname+':';
 const CACHE=PREFIX+VERSION;
 const INDEX=new URL('index.html',BASE).href;
 const META=new URL('__offline_ready__',BASE).href;
-const bundled=/\/(?:app|learning-core|learning-ui)\.js$|\/(?:styles|ui|learning)\.css$/;
+let refreshJob=null;
 function allowed(url){const u=new URL(url,BASE),base=new URL(BASE);return u.origin===base.origin&&u.pathname.startsWith(base.pathname)&&!u.username&&!u.password;}
-async function refresh(){
- const response=await fetch(INDEX,{cache:'reload'});if(!response.ok)throw Error('题库页面下载失败');
- const html=await response.text();if(!html.includes('id="question"'))throw Error('题库页面内容无效');
- const urls=new Set([BASE,INDEX,new URL('manifest.webmanifest',BASE).href,new URL('icon-192.png',BASE).href,new URL('icon-512.png',BASE).href,new URL('icon.svg',BASE).href]);
- for(const match of html.matchAll(/(?:src|href)=["']([^"']+)["']/g)){
-  if(match[1].startsWith('#')||match[1].startsWith('data:'))continue;
-  const u=new URL(match[1],BASE);if(allowed(u.href)&&/\.(?:js|css|png|svg|ico|webmanifest)$/.test(u.pathname))urls.add(u.href);
- }
- const assets=[...urls],cache=await caches.open(CACHE);
- await cache.addAll(assets.map(url=>new Request(url,{cache:'reload'})));
- const meta={ready:true,at:Date.now(),count:assets.length,assets};
- await cache.put(META,new Response(JSON.stringify(meta),{headers:{'Content-Type':'application/json'}}));
- return {ready:true,at:meta.at,count:meta.count};
+async function download(request,timeout=12000){
+ const controller=new AbortController();let timer;
+ try{
+  return await Promise.race([
+   (async()=>{
+    const response=await fetch(request,{cache:'reload',signal:controller.signal});
+    if(!response.ok)throw Error('资源下载失败：'+response.status);
+    // Buffer the body within the timeout, so a stalled body cannot block the update.
+    const body=await response.arrayBuffer();
+    return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
+   })(),
+   new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Error('网络请求超时'));},timeout);})
+  ]);
+ }finally{clearTimeout(timer);}
+}
+async function metadata(){
+ const control=await caches.open(CACHE),response=await control.match(META);
+ if(!response)return null;
+ try{const meta=await response.json();return typeof meta.cacheName==='string'&&meta.cacheName.startsWith(CACHE+':snapshot:')&&Array.isArray(meta.assets)?meta:null;}catch{return null;}
+}
+async function clean(meta,allVersions=false){
+ const keep=new Set([CACHE,meta?.cacheName,meta?.previous]);
+ for(const name of await caches.keys())if(name.startsWith(allVersions?PREFIX:CACHE+':snapshot:')&&!keep.has(name))await caches.delete(name);
+}
+async function createSnapshot(){
+ const old=await metadata(),name=CACHE+':snapshot:'+Date.now()+'-'+Math.random().toString(36).slice(2);
+ try{
+  const response=await download(INDEX),html=await response.clone().text();
+  if(!html.includes('id="question"'))throw Error('题库页面内容无效');
+  const urls=new Set([BASE,INDEX,new URL('manifest.webmanifest',BASE).href,new URL('icon-192.png',BASE).href,new URL('icon-512.png',BASE).href,new URL('icon.svg',BASE).href]);
+  for(const match of html.matchAll(/(?:src|href)=["']([^"']+)["']/g)){
+   if(match[1].startsWith('#')||match[1].startsWith('data:'))continue;
+   const u=new URL(match[1],BASE);if(allowed(u.href)&&/\.(?:js|css|png|svg|ico|webmanifest)$/.test(u.pathname))urls.add(u.href);
+  }
+  const cache=await caches.open(name),assets=[...urls];
+  // Both entry URLs use this exact HTML. Never refetch the page while building
+  // its assets, because another deployment could otherwise mix two releases.
+  await cache.put(BASE,response.clone());await cache.put(INDEX,response.clone());
+  const results=await Promise.allSettled(assets.filter(url=>url!==BASE&&url!==INDEX).map(async url=>{
+   await cache.put(url,await download(url));
+  }));
+  const failed=results.find(r=>r.status==='rejected');if(failed)throw failed.reason;
+  const complete=await Promise.all(assets.map(url=>cache.match(url)));if(!complete.every(Boolean))throw Error('离线缓存不完整');
+  const meta={ready:true,at:Date.now(),count:assets.length,assets,cacheName:name,previous:old?.cacheName||null};
+  const control=await caches.open(CACHE);
+  // This single pointer write commits a complete snapshot. Failure before here
+  // leaves the old page, scripts and readiness information untouched.
+  await control.put(META,new Response(JSON.stringify(meta),{headers:{'Content-Type':'application/json'}}));
+  try{await clean(meta);}catch{}
+  return {ready:true,at:meta.at,count:meta.count};
+ }catch(error){await caches.delete(name);throw error;}
+}
+function refresh(){
+ if(!refreshJob)refreshJob=createSnapshot().finally(()=>{refreshJob=null;});
+ return refreshJob;
 }
 async function status(){
- const cache=await caches.open(CACHE),response=await cache.match(META);if(!response)return {ready:false};
- const meta=await response.json();const found=await Promise.all(meta.assets.map(url=>cache.match(url)));
+ const meta=await metadata();if(!meta)return {ready:false};
+ const cache=await caches.open(meta.cacheName),found=await Promise.all(meta.assets.map(url=>cache.match(url)));
  return {ready:found.every(Boolean),at:meta.at,count:meta.count};
 }
 self.addEventListener('install',event=>event.waitUntil(refresh()));
 self.addEventListener('activate',event=>event.waitUntil((async()=>{
- for(const name of await caches.keys())if(name.startsWith(PREFIX)&&name!==CACHE)await caches.delete(name);
- await self.clients.claim();
+ await clean(await metadata(),true);await self.clients.claim();
 })()));
 self.addEventListener('message',event=>{
  const type=event.data?.type;
@@ -45,17 +86,14 @@ self.addEventListener('fetch',event=>{
  if(request.method!=='GET'||!allowed(url.href)||url.pathname.endsWith('/sw.js'))return;
  if(request.mode!=='navigate'&&!/\.(?:js|css|png|svg|ico|webmanifest)$/.test(url.pathname))return;
  event.respondWith((async()=>{
-  const cache=await caches.open(CACHE),cached=await cache.match(request);
-  if(request.mode!=='navigate'&&cached&&bundled.test(url.pathname)&&url.search)return cached;
-  try{
-   const response=await fetch(request);
-   if(response.ok){try{await cache.put(request,response.clone());}catch{}return response;}
+  const meta=await metadata();
+  if(meta){
+   const cache=await caches.open(meta.cacheName),cached=await cache.match(request.mode==='navigate'?INDEX:request);
    if(cached)return cached;
-   if(request.mode==='navigate'){const page=await cache.match(INDEX);if(page)return page;}
-   return response;
-  }catch{
-   if(cached)return cached;
-   if(request.mode==='navigate'){const page=await cache.match(INDEX);if(page)return page;}
+  }
+  // Unknown URLs have a bounded network fallback and never mutate the committed
+  // snapshot. New HTML is published only together with all of its resources.
+  try{return await download(request,4000);}catch{
    return new Response('离线题库尚未缓存完整，请联网打开练习台后重试。',{status:503,headers:{'Content-Type':'text/plain;charset=utf-8'}});
   }
  })());

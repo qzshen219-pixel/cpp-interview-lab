@@ -10,14 +10,26 @@ const time=v=>Number.isFinite(v)&&v>=0&&v<=8640000000000000?v:0;
 const ratings=['review','basic','fluent'];
 const statuses=['all','pending','answered','review','due','favorite','notes','plan','calendar'];
 const projects=['全部','IM','云盘','通用'];
+const dayFormatter=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'});
+const cardGroups={note:['note'],favorite:['favorite'],review:['review','ratingBase','ratingDay','ratedSubmissionAt','pendingReview'],interview:['interviewAnswered'],result:['lastResult']};
 function dayKey(now=Date.now()){
- const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(now));
+ const parts=dayFormatter.formatToParts(new Date(now));
  return ['year','month','day'].map(k=>parts.find(p=>p.type===k).value).join('-');
 }
 function validDay(v){if(typeof v!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(v))return false;const n=Date.parse(v+'T12:00:00+08:00');return Number.isFinite(n)&&dayKey(n)===v;}
 function addDays(day,n){return dayKey(Date.parse(day+'T12:00:00+08:00')+n*DAY);}
 function projectOf(q){return q.project||(/\bIM\b|即时通[讯信]|聊天|client_msg|outbox/i.test([q.title,q.prompt,q.sourceRoundTitle||''].join(' '))?'IM':'通用');}
-function fresh(bank){return {version:2,query:'',status:'all',source:'全部',project:'全部',module:'全部',type:'全部',mode:'practice',current:bank[0]?.id||null,entries:{},outcomes:{},cards:{},activity:{},settings:{dailyTarget:10,dailyProject:'全部'},examOptions:{count:10,minutes:0,reviewFirst:true,ratios:[40,40,20]},dailyPlan:null,exam:null,lastTest:null,interview:null,interviewHistory:[],updatedAt:0,lastBackupAt:0};}
+function fresh(bank){return {version:2,resetAt:0,query:'',status:'all',source:'全部',project:'全部',module:'全部',type:'全部',mode:'practice',current:bank[0]?.id||null,entries:{},outcomes:{},cards:{},activity:{},settings:{dailyTarget:10,dailyProject:'全部'},examOptions:{count:10,minutes:0,reviewFirst:true,ratios:[40,40,20]},dailyPlan:null,exam:null,lastTest:null,interview:null,interviewHistory:[],updatedAt:0,lastBackupAt:0};}
+function fieldTimes(c){
+ const old=time(c.updatedAt),known=obj(c.fieldUpdatedAt)?c.fieldUpdatedAt:{};
+ // Old backups do not identify which field changed. An absent note or schedule
+ // must not erase useful data merely because a favorite was edited later.
+ const fallback={note:c.note?old:0,favorite:old,review:c.review||c.pendingReview?old:0,interview:c.interviewAnswered?old:0,result:c.lastResult?old:0};
+ return Object.fromEntries(Object.keys(cardGroups).map(k=>[k,own(known,k)?time(known[k]):fallback[k]]));
+}
+function reset(bank,state,now=Date.now()){
+ const out=fresh(bank);out.resetAt=Math.max(time(now),time(state?.resetAt)+1);out.updatedAt=out.resetAt;return out;
+}
 function reviewRecord(r){
  if(!obj(r)||!time(r.dueAt))return null;
  return {dueAt:time(r.dueAt),lastReviewedAt:time(r.lastReviewedAt),intervalDays:Math.min(180,Math.max(0,Number(r.intervalDays)||0)),repetitions:Math.min(100000,Math.max(0,Number(r.repetitions)||0)),lapses:Math.min(100000,Math.max(0,Number(r.lapses)||0)),grade:ratings.includes(r.grade)?r.grade:'review'};
@@ -73,16 +85,26 @@ function normalize(raw,bank,now=Date.now()){
  state.interview=cleanInterview(raw.interview);
  state.interviewHistory=(Array.isArray(raw.interviewHistory)?raw.interviewHistory:[]).map(cleanInterview).filter(v=>v?.submitted).slice(-10);
  if(state.mode==='interview'&&!state.interview)state.mode='interview';
- state.updatedAt=time(raw.updatedAt);state.lastBackupAt=time(raw.lastBackupAt);
+ for(const [id,c] of Object.entries(state.cards))c.fieldUpdatedAt=fieldTimes({...c,fieldUpdatedAt:raw.cards?.[id]?.fieldUpdatedAt});
+ state.resetAt=time(raw.resetAt);state.updatedAt=time(raw.updatedAt);state.lastBackupAt=time(raw.lastBackupAt);
  return state;
 }
 function load(bank,local,session,now=Date.now()){
  let invalid=false,legacy=false,raw=null;
  try{const v=local.getItem(KEY);if(v){raw=JSON.parse(v);if(!obj(raw)||raw.version!==2){invalid=true;raw=null;}}}catch{invalid=true;}
+ if(!raw)try{const v=session?.getItem(KEY);if(v){const p=JSON.parse(v);if(obj(p)&&p.version===2)raw=p;}}catch{invalid=true;}
  if(!raw)try{const v=session?.getItem(LEGACY_KEY);if(v){const p=JSON.parse(v);if(obj(p)&&p.version===1){raw=p;legacy=true;}}}catch{invalid=true;}
  return {state:normalize(raw,bank,now),invalid,migrated:legacy};
 }
 function card(state,id){return state.cards[id]||(state.cards[id]={favorite:false,note:'',interviewAnswered:false,updatedAt:0,review:null,ratingBase:null,ratingDay:'',ratedSubmissionAt:0,pendingReview:false,lastResult:null});}
+function editCard(state,id,fields,now=Date.now()){
+ const c=card(state,id),clocks=fieldTimes(c);let stamp=time(now);
+ for(const [group,keys] of Object.entries(cardGroups))if(keys.some(k=>own(fields,k))){
+  const at=Math.max(stamp,clocks[group]+1);clocks[group]=at;stamp=Math.max(stamp,at);
+  for(const k of keys)if(own(fields,k))c[k]=clone(fields[k]);
+ }
+ c.fieldUpdatedAt=clocks;c.updatedAt=Math.max(c.updatedAt,stamp);state.updatedAt=Math.max(state.updatedAt,stamp);return c;
+}
 function recordActivity(state,id,now=Date.now()){
  const day=dayKey(now),a=state.activity[day]||(state.activity[day]={ids:[],updatedAt:0});
  if(!a.ids.includes(id))a.ids.push(id);a.updatedAt=now;state.updatedAt=now;
@@ -91,7 +113,7 @@ function submitAnswer(state,id,answer,now=Date.now()){
  if(typeof answer!=='string'||!answer.trim()||answer.length>10000)throw Error('请填写有效回答，最多 10000 字符。');
  const e=state.entries[id]||(state.entries[id]={draft:'',submitted:'',rating:null,updatedAt:0,submittedAt:0});
  e.draft=answer;e.updatedAt=now;
- if(e.submitted!==answer){e.submitted=answer;e.submittedAt=now;e.rating=null;card(state,id).pendingReview=true;card(state,id).updatedAt=now;}
+ if(e.submitted!==answer){e.submitted=answer;e.submittedAt=now;e.rating=null;editCard(state,id,{pendingReview:true},now);}
  recordActivity(state,id,now);return e;
 }
 function schedule(previous,grade,now=Date.now()){
@@ -106,7 +128,7 @@ function rate(state,id,grade,now=Date.now(),objective=false){
  const attempt=e?.submittedAt||0,same=c.ratingDay===day&&c.ratedSubmissionAt===attempt&&!c.pendingReview;
  if(same&&c.review?.grade===grade){recordActivity(state,id,now);return c.review;}
  const base=same?c.ratingBase:c.review;
- c.ratingBase=clone(base);c.review=schedule(base,grade,now);c.ratingDay=day;c.ratedSubmissionAt=attempt;c.pendingReview=false;c.updatedAt=now;
+ editCard(state,id,{ratingBase:clone(base),review:schedule(base,grade,now),ratingDay:day,ratedSubmissionAt:attempt,pendingReview:false},now);
  if(e){e.rating=grade;e.updatedAt=now;}
  recordActivity(state,id,now);return c.review;
 }
@@ -180,7 +202,7 @@ function buildInterview(bank,project,count=5,minutes=20,now=Date.now(),rng=Math.
 function finishInterview(state,now=Date.now(),auto=false){
  const ex=state.interview;if(!ex||ex.submitted)return ex;
  ex.submitted=true;ex.finishedAt=now;ex.updatedAt=now;ex.autoSubmitted=auto;
- for(let i=0;i<ex.rounds.length;i++)if(ex.answers[i]?.trim()){const c=card(state,ex.rounds[i].id);c.interviewAnswered=true;c.updatedAt=now;recordActivity(state,ex.rounds[i].id,now);}
+ for(let i=0;i<ex.rounds.length;i++)if(ex.answers[i]?.trim()){editCard(state,ex.rounds[i].id,{interviewAnswered:true},now);recordActivity(state,ex.rounds[i].id,now);}
  state.interviewHistory=[...state.interviewHistory.filter(h=>h.id!==ex.id),clone(ex)].slice(-10);return ex;
 }
 function parseBackup(raw,bank,now=Date.now()){
@@ -196,16 +218,30 @@ function merge(local,incoming,bank,now=Date.now()){
  const empty=!Object.keys(a.entries).length&&!Object.keys(a.cards).length&&!Object.keys(a.outcomes).length&&!Object.keys(a.activity).length&&!a.exam&&!a.interview&&!a.interviewHistory.length;
  const out=clone(empty?b:a);
  for(const [id,e] of Object.entries(b.entries))if(!out.entries[id]||e.updatedAt>out.entries[id].updatedAt||(e.updatedAt===out.entries[id].updatedAt&&!out.entries[id].submitted&&e.submitted))out.entries[id]=clone(e);
- for(const [id,c] of Object.entries(b.cards))if(!out.cards[id]||c.updatedAt>out.cards[id].updatedAt)out.cards[id]=clone(c);
- for(const [id,v] of Object.entries(b.outcomes))if(!own(out.outcomes,id)||(b.cards[id]?.updatedAt||0)>(a.cards[id]?.updatedAt||0))out.outcomes[id]=v;
+ for(const [id,c] of Object.entries(b.cards)){
+  if(!out.cards[id]){out.cards[id]=clone(c);continue;}
+  const target=out.cards[id],clocks=fieldTimes(target),incomingClocks=fieldTimes(c);
+  for(const [group,keys] of Object.entries(cardGroups))if(incomingClocks[group]>clocks[group]){
+   for(const k of keys)target[k]=clone(c[k]);clocks[group]=incomingClocks[group];
+  }
+  target.fieldUpdatedAt=clocks;target.updatedAt=Math.max(target.updatedAt,c.updatedAt);
+ }
+ for(const [id,v] of Object.entries(b.outcomes))if(!own(out.outcomes,id)||(b.cards[id]?.fieldUpdatedAt?.result||0)>(a.cards[id]?.fieldUpdatedAt?.result||0))out.outcomes[id]=v;
  for(const [day,v] of Object.entries(b.activity)){const old=out.activity[day]||{ids:[],updatedAt:0};out.activity[day]={ids:[...new Set([...old.ids,...v.ids])],updatedAt:Math.max(old.updatedAt,v.updatedAt)};}
  const histories=new Map(out.interviewHistory.map(h=>[h.id,h]));for(const h of b.interviewHistory)if(!histories.has(h.id)||h.updatedAt>histories.get(h.id).updatedAt)histories.set(h.id,h);
  out.interviewHistory=[...histories.values()].sort((a,b)=>a.finishedAt-b.finishedAt).slice(-10);
  if(!a.interview&&!a.interviewHistory.length&&b.interview)out.interview=clone(b.interview);
- out.updatedAt=Math.max(a.updatedAt,b.updatedAt);out.lastBackupAt=Math.max(a.lastBackupAt,b.lastBackupAt);
+ // Reset epochs belong to this browser. An explicit backup import can restore
+ // old records without importing another device's reset history.
+ out.resetAt=a.resetAt;out.updatedAt=Math.max(a.updatedAt,b.updatedAt);out.lastBackupAt=Math.max(a.lastBackupAt,b.lastBackupAt);
  return out;
 }
+function sync(local,incoming,bank,now=Date.now()){
+ const a=normalize(local,bank,now),b=normalize(incoming,bank,now);
+ if(a.resetAt!==b.resetAt)return clone(a.resetAt>b.resetAt?a:b);
+ return merge(a,b,bank,now);
+}
 function backup(state,now=Date.now()){return JSON.stringify({format:'cpp-interview-lab-backup',schemaVersion:2,exportedAt:new Date(now).toISOString(),state},null,2);}
-const api={KEY,LEGACY_KEY,DAY,dayKey,addDays,validDay,fresh,normalize,load,clone,card,submitAnswer,recordActivity,schedule,rate,isCompleted,needsReview,isDue,inReviewDay,mastery,makePlan,ensurePlan,validateExamOptions,sample,buildInterview,finishInterview,parseBackup,merge,backup,projectOf};
+const api={KEY,LEGACY_KEY,DAY,dayKey,addDays,validDay,fresh,reset,normalize,load,clone,card,editCard,submitAnswer,recordActivity,schedule,rate,isCompleted,needsReview,isDue,inReviewDay,mastery,makePlan,ensurePlan,validateExamOptions,sample,buildInterview,finishInterview,parseBackup,merge,sync,backup,projectOf};
 if(typeof module==='object'&&module.exports)module.exports=api;else root.LearningCore=api;
 })(typeof window==='object'?window:globalThis);

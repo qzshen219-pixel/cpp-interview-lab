@@ -2,7 +2,7 @@
 'use strict';
 const app=window.PracticeApp;if(!app)return;
 const C=app.C,$=id=>document.getElementById(id),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let importGeneration=0,pendingImport=null,registration=null,installPrompt=null,reloadForUpdate=false,offlineReady=false,lastHubDay='';
+let importGeneration=0,pendingImport=null,registration=null,installPrompt=null,reloadForUpdate=false,offlineReady=false,lastHubDay='',calendarMarkup='',masteryMarkup='';
 const timeLabel=n=>n?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(n):'尚未导出';
 function renderHub(){
  const state=app.state,now=Date.now(),day=C.dayKey(now),plan=state.dailyPlan,activity=new Set(state.activity[day]?.ids||[]);
@@ -14,10 +14,14 @@ function renderHub(){
  $('daily-start').textContent=done===plan.ids.length&&plan.ids.length?'回顾今日练习':'开始今日练习';$('daily-start').disabled=!plan.ids.length;
  $('due-total').textContent=due;$('favorite-total').textContent=favorite;$('notes-total').textContent=notes;
  $('all-today-count').textContent=activity.size;
- const calendars=Array.from({length:7},(_,i)=>{const date=C.addDays(day,i);const count=app.bank.filter(q=>C.inReviewDay(state,q.id,date,now)).length;return {date,count,i};});
- $('review-calendar').innerHTML=calendars.map(({date,count,i})=>`<button class="calendar-day ${i===0?'is-today':''}" data-calendar="${date}" aria-label="${date}，${count} 道${i===0?'已到期':'计划复习'}题"><span>${i===0?'今天':new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',weekday:'short'}).format(Date.parse(date+'T12:00:00+08:00'))}</span><strong>${date.slice(8)}</strong><span>${count} 题</span></button>`).join('');
+ const reviewCounts=new Map([[day,due]]);
+ for(const c of Object.values(state.cards))if(c.review?.dueAt>now){const date=C.dayKey(c.review.dueAt);if(date!==day)reviewCounts.set(date,(reviewCounts.get(date)||0)+1);}
+ const calendars=Array.from({length:7},(_,i)=>{const date=C.addDays(day,i);return {date,count:reviewCounts.get(date)||0,i};});
+ const nextCalendar=calendars.map(({date,count,i})=>`<button class="calendar-day ${i===0?'is-today':''}" data-calendar="${date}" aria-label="${date}，${count} 道${i===0?'已到期':'计划复习'}题"><span>${i===0?'今天':new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',weekday:'short'}).format(Date.parse(date+'T12:00:00+08:00'))}</span><strong>${date.slice(8)}</strong><span>${count} 题</span></button>`).join('');
+ if(nextCalendar!==calendarMarkup){$('review-calendar').innerHTML=nextCalendar;calendarMarkup=nextCalendar;}
  const stats=C.mastery(app.bank,state);
- $('mastery-list').innerHTML=stats.map(m=>`<div class="mastery-item"><div><strong>${esc(m.module)}</strong><span>${m.score==null?'尚未自评':m.score+'% 掌握度'} · 已答 ${m.completed}/${m.total}</span></div><progress max="100" value="${m.score||0}" aria-label="${esc(m.module)}掌握度"></progress></div>`).join('');
+ const nextMastery=stats.map(m=>`<div class="mastery-item"><div><strong>${esc(m.module)}</strong><span>${m.score==null?'尚未自评':m.score+'% 掌握度'} · 已答 ${m.completed}/${m.total}</span></div><progress max="100" value="${m.score||0}" aria-label="${esc(m.module)}掌握度"></progress></div>`).join('');
+ if(nextMastery!==masteryMarkup){$('mastery-list').innerHTML=nextMastery;masteryMarkup=nextMastery;}
  const weak=stats.filter(m=>m.rated>0).sort((a,b)=>a.score-b.score).slice(0,2);
  $('weak-focus').textContent=weak.length?'下一轮可强化：'+weak.map(m=>m.module).join('、'):'完成作答并自评后，这里会给出下一轮强化方向。';
  if(document.activeElement!==$('daily-target'))$('daily-target').value=state.settings.dailyTarget;
@@ -27,7 +31,7 @@ function renderHub(){
  $('hub-due-caption').textContent=due?'包含此前尚未完成的到期复习':'目前没有到期题，先完成今天的新题';
  lastHubDay=day;
 }
-document.addEventListener('study:change',renderHub);
+document.addEventListener('study:change',event=>{if(event.detail?.refreshHub!==false)renderHub();});
 $('learning-hub').addEventListener('click',event=>{
  const button=event.target.closest('button');if(!button)return;
  if(button.dataset.scope){app.openScope(button.dataset.scope);return;}
@@ -36,7 +40,7 @@ $('learning-hub').addEventListener('click',event=>{
   try{app.updatePlan(Number($('daily-target').value),$('daily-project').value);app.notify('今日计划已更新，已完成的匹配题目会保留。');}catch(error){app.notify(error.message);}
  }
 });
-$('backup-open').addEventListener('click',()=>{renderHub();$('backup-dialog').showModal();});
+$('backup-open').addEventListener('click',()=>{app.flush();renderHub();$('backup-dialog').showModal();});
 for(const id of ['backup-close','install-close'])$(id).addEventListener('click',()=>$(id==='backup-close'?'backup-dialog':'install-dialog').close());
 $('export-learning').addEventListener('click',()=>{
  try{
@@ -64,7 +68,7 @@ function offlineLabel(message,ready=false){offlineReady=ready;$('offline-status'
 function askWorker(type,timeout=12000){
  return new Promise((resolve,reject)=>{
   const worker=registration?.active||navigator.serviceWorker?.controller;if(!worker){reject(Error('离线组件尚未就绪'));return;}
-  const channel=new MessageChannel(),timer=setTimeout(()=>reject(Error('离线状态查询超时')),timeout);
+  const channel=new MessageChannel(),timer=setTimeout(()=>{channel.port1.close();reject(Error('离线状态查询超时'));},timeout);
   channel.port1.onmessage=event=>{clearTimeout(timer);channel.port1.close();resolve(event.data);};worker.postMessage({type},[channel.port2]);
  });
 }

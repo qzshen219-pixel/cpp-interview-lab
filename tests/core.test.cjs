@@ -89,3 +89,39 @@ test('a later interview self-evaluation wins when merging histories with the sam
  const b=structuredClone(a);b.interviewHistory[0].ratings[0]='fluent';b.interviewHistory[0].updatedAt=now+2000;
  const merged=C.merge(a,b,bank,now);assert.equal(merged.interviewHistory.length,1);assert.equal(merged.interviewHistory[0].ratings[0],'fluent');
 });
+
+test('legacy favorite-only backup never replaces an existing note with its default empty note',()=>{
+ const a=C.fresh(bank),b=C.fresh(bank);
+ Object.assign(C.card(a,'q0'),{note:'设备 A 的重要笔记',updatedAt:now});
+ Object.assign(C.card(b,'q0'),{favorite:true,updatedAt:now+1000});
+ const merged=C.merge(a,b,bank,now);assert.equal(merged.cards.q0.note,'设备 A 的重要笔记');assert.equal(merged.cards.q0.favorite,true);
+});
+test('independent note, favorite and review changes merge in either direction',()=>{
+ const start=C.fresh(bank);C.submitAnswer(start,'q0','答案',now);C.rate(start,'q0','basic',now);
+ const a=structuredClone(start),b=structuredClone(start);
+ C.editCard(a,'q0',{note:'补充项目例子'},now+1000);
+ C.editCard(b,'q0',{favorite:true},now+2000);C.rate(b,'q0','fluent',now+3000);
+ for(const merged of [C.merge(a,b,bank,now),C.merge(b,a,bank,now)]){
+  assert.equal(merged.cards.q0.note,'补充项目例子');assert.equal(merged.cards.q0.favorite,true);assert.equal(merged.cards.q0.review.grade,'fluent');
+ }
+});
+test('explicit note deletion and unfavorite survive import without deleting a newer review',()=>{
+ const original=C.fresh(bank);C.editCard(original,'q0',{note:'旧笔记',favorite:true},now);
+ const cleared=structuredClone(original);C.editCard(cleared,'q0',{note:'',favorite:false},now+1000);
+ C.submitAnswer(original,'q0','新的回答',now+2000);C.rate(original,'q0','basic',now+2000);
+ const restored=C.parseBackup(C.backup(cleared,now),bank,now).state,merged=C.merge(original,restored,bank,now);
+ assert.equal(merged.cards.q0.note,'');assert.equal(merged.cards.q0.favorite,false);assert.equal(merged.cards.q0.review.grade,'basic');
+});
+test('reset wins over stale tabs while explicit old-backup restoration preserves this device reset epoch',()=>{
+ const old=C.fresh(bank);C.submitAnswer(old,'q0','重置前的回答',now);
+ const cleared=C.reset(bank,old,now+1000);C.submitAnswer(old,'q1','迟到的旧页面写入',now+2000);
+ for(const merged of [C.sync(old,cleared,bank,now),C.sync(cleared,old,bank,now)]){
+  assert.equal(Object.keys(merged.entries).length,0);assert.equal(merged.resetAt,now+1000);
+ }
+ const restored=C.merge(cleared,old,bank,now);assert.equal(restored.entries.q0.submitted,'重置前的回答');assert.equal(restored.resetAt,cleared.resetAt);
+});
+test('storage fallback restores the current session when persistent storage is unavailable',()=>{
+ const s=C.fresh(bank),session=memory();C.submitAnswer(s,'q0','临时保留的回答',now);session.setItem(C.KEY,JSON.stringify(s));
+ const restored=C.load(bank,{getItem(){throw Error('blocked');}},session,now);
+ assert.equal(restored.state.entries.q0.submitted,'临时保留的回答');assert.equal(restored.migrated,false);
+});
