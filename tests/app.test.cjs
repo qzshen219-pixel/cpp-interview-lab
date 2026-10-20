@@ -133,3 +133,49 @@ test('page hide immediately flushes the latest note and draft before leaving',t=
  b.w.dispatchEvent(new b.w.Event('pagehide'));const saved=JSON.parse(b.stored()),id=b.state().current;
  assert.equal(saved.entries[id].draft,'切后台前的最后一句');assert.equal(saved.cards[id].note,'切后台前的笔记');assert.equal(b.$('#notes-total').textContent,'1');
 });
+
+test('reference search shows matching snippets, Unicode highlights and preserved scope after reopen',t=>{
+ const b=boot();t.after(b.close);const q=b.app.bank[0],phrase=q.answer[0].slice(0,16);
+ b.value('#search-scope','reference');b.value('#question-search',phrase);
+ assert.ok(b.app.filtered().some(item=>item.id===q.id));assert.ok(b.$('.search-hit mark'));assert.match(b.$('.search-hit').textContent,/参考答案/);
+ assert.equal(b.$('#question-search').value,phrase);const c=boot({local:b.stored()});t.after(c.close);assert.equal(c.state().searchScope,'reference');assert.equal(c.state().query,phrase);
+ b.click('#clear-all-filter');assert.equal(b.state().searchScope,'all');assert.equal(b.app.filtered().length,1279);
+});
+test('personal full text search finds notes safely and uses the same scope through WebMCP',t=>{
+ const b=boot();t.after(b.close);const id=b.state().current,note='个人唯一关键字 </textarea><img src=x onerror=alert(1)> ＳＱＬ';b.value('#personal-note',note,'input');
+ const tool=b.tools.find(t=>t.name==='filter_practice_questions');const result=tool.execute({module:'全部',type:'全部',query:'个人唯一关键字 sql',searchScope:'personal'});
+ assert.equal(result.count,1);assert.equal(result.searchScope,'personal');assert.equal(b.state().current,id);assert.equal(b.$('#personal-note').value,note);assert.equal(b.$('#question img'),null);assert.ok(b.$('.search-hit mark'));
+});
+test('typing search is delayed while changing mode settles the pending query',async t=>{
+ const b=boot();t.after(b.close);b.$('#question-search').focus();b.value('#question-search','shared_ptr','input');assert.equal(b.state().query,'');
+ await new Promise(resolve=>setTimeout(resolve,220));assert.equal(b.state().query,'shared_ptr');assert.equal(b.w.document.activeElement,b.$('#question-search'));
+ b.value('#question-search','vector','input');b.click('#exam-tab');assert.equal(b.state().query,'vector');assert.equal(b.$('#question-search').value,'vector');
+ await new Promise(resolve=>setTimeout(resolve,200));assert.deepEqual(b.errors,[]);
+});
+test('history dialog compares versions, confirms restoration and retains unsaved content',t=>{
+ const b=boot();t.after(b.close);const id=b.state().current;b.value('#draft','共同\n第一个版本','input');b.click('#save-answer');b.advance(1000);b.value('#draft','共同\n第二个版本','input');b.click('#save-answer');b.value('#draft','共同\n未保存的补充','input');
+ b.click('[data-answer-history]');assert.equal(b.$('#answer-history-dialog').open,true);const version=b.app.C.answerVersions(b.state(),id).find(v=>v.answer==='共同\n第一个版本');b.value('#answer-version',version.id);
+ assert.ok(b.$('#history-before del'));assert.ok(b.$('#history-after ins'));assert.match(b.$('#history-after').textContent,/未保存/);
+ b.click('#restore-answer');assert.equal(b.$('#confirm-dialog').open,true);b.click('#cancel-dialog');assert.equal(b.state().entries[id].submitted,'共同\n第二个版本');
+ b.click('[data-answer-history]');b.value('#answer-version',version.id);b.click('#restore-answer');b.click('#confirm-dialog-action');assert.equal(b.state().entries[id].submitted,'共同\n第一个版本');assert.equal(b.$('#draft').value,'共同\n第一个版本');assert.ok(b.app.C.answerVersions(b.state(),id).some(v=>v.answer.includes('未保存')));
+ const c=boot({local:b.stored()});t.after(c.close);assert.ok(c.app.C.answerVersions(c.state(),id).some(v=>v.answer.includes('第二个版本')));
+});
+test('history rendering escapes saved text and clears its contents after a remote reset',t=>{
+ const b=boot();t.after(b.close);b.value('#draft','<script>danger()</script>','input');b.click('#save-answer');b.click('[data-answer-history]');assert.equal(b.$('#answer-history-dialog script'),null);assert.match(b.$('#history-before').textContent,/<script>/);
+ const raw=JSON.stringify(b.app.C.reset(b.app.bank,b.state(),NOW+1000));b.w.localStorage.setItem(b.app.C.KEY,raw);b.w.dispatchEvent(new b.w.StorageEvent('storage',{key:b.app.C.KEY,newValue:raw}));assert.equal(b.$('#answer-comparison').hidden,true);assert.equal(b.$('#history-before').textContent,'');
+});
+test('weekly report separates objective results, omissions and manual evaluations and exports selected week',t=>{
+ const b=boot();t.after(b.close);b.value('#project-filter','通用');b.value('#source-filter','基础');b.click('#exam-tab');b.value('#exam-count','5');b.value('#exam-minutes','5');b.click('#start-exam');
+ for(let i=0;i<2;i++){const id=b.state().exam.ids[i],q=b.app.bank.find(q=>q.id===id);b.click(`[data-q="${id}"]`);b.value(`input[name="exam-choice"][value="${i?q.correct===0?1:0:q.correct}"]`,String(i?q.correct===0?1:0:q.correct));}
+ b.advance(300001);b.click('#return-practice');b.value('#draft','独立解释这道题','input');b.click('#save-answer');b.click('[data-rating="basic"]');b.click('#weekly-open');
+ assert.equal(b.$('#weekly-dialog').open,true);assert.match(b.$('#weekly-report').textContent,/50%/);assert.match(b.$('#weekly-report').textContent,/另有 3 题未答/);assert.equal(b.app.C.weekReport(b.app.bank,b.state(),0,NOW+300001).selfTotal,1);assert.equal(b.$('#weekly-report table tbody').children.length,7);
+ b.click('#export-weekly');assert.match(b.downloads.at(-1),/面试练习周报-2026-10-19\.md/);b.value('#weekly-offset','1');assert.match(b.$('#weekly-range').textContent,/2026-10-12/);b.click('#export-weekly');assert.match(b.downloads.at(-1),/2026-10-12\.md/);assert.match(b.$('#weekly-report').textContent,/从 2026-10-19 起记录/);
+});
+test('active exams never display answer search snippets',t=>{
+ const b=boot();t.after(b.close);b.value('#question-search','shared_ptr');b.click('#exam-tab');b.value('#exam-count','5');b.click('#start-exam');assert.ok(b.state().exam);assert.equal(b.$('#search-scope').disabled,true);assert.equal(b.$('.search-hit'),null);assert.equal(b.$('#question .answer-details'),null);
+});
+
+test('empty history is explained and selecting reference scope opens its matching explanation',t=>{
+ const b=boot();t.after(b.close);b.click('[data-answer-history]');assert.equal(b.$('#answer-history-empty').hidden,false);assert.equal(b.$('#answer-comparison').hidden,true);b.click('#answer-history-close');
+ b.value('#search-scope','reference');b.value('#question-search',b.app.bank[0].answer[0].slice(0,12));assert.equal(b.$('.answer-details').open,true);
+});

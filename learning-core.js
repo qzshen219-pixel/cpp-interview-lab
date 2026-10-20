@@ -19,7 +19,7 @@ function dayKey(now=Date.now()){
 function validDay(v){if(typeof v!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(v))return false;const n=Date.parse(v+'T12:00:00+08:00');return Number.isFinite(n)&&dayKey(n)===v;}
 function addDays(day,n){return dayKey(Date.parse(day+'T12:00:00+08:00')+n*DAY);}
 function projectOf(q){return q.project||(/\bIM\b|即时通[讯信]|聊天|client_msg|outbox/i.test([q.title,q.prompt,q.sourceRoundTitle||''].join(' '))?'IM':'通用');}
-function fresh(bank){return {version:2,resetAt:0,query:'',status:'all',source:'全部',project:'全部',module:'全部',type:'全部',mode:'practice',current:bank[0]?.id||null,entries:{},outcomes:{},cards:{},activity:{},settings:{dailyTarget:10,dailyProject:'全部'},examOptions:{count:10,minutes:0,reviewFirst:true,ratios:[40,40,20]},dailyPlan:null,exam:null,lastTest:null,interview:null,interviewHistory:[],updatedAt:0,lastBackupAt:0};}
+function fresh(bank){return {version:2,resetAt:0,query:'',searchScope:'all',answerHistory:{},studyLog:{},reviewTasks:{},reportStartedAt:0,status:'all',source:'全部',project:'全部',module:'全部',type:'全部',mode:'practice',current:bank[0]?.id||null,entries:{},outcomes:{},cards:{},activity:{},settings:{dailyTarget:10,dailyProject:'全部'},examOptions:{count:10,minutes:0,reviewFirst:true,ratios:[40,40,20]},dailyPlan:null,exam:null,lastTest:null,interview:null,interviewHistory:[],updatedAt:0,lastBackupAt:0};}
 function fieldTimes(c){
  const old=time(c.updatedAt),known=obj(c.fieldUpdatedAt)?c.fieldUpdatedAt:{};
  // Old backups do not identify which field changed. An absent note or schedule
@@ -32,13 +32,13 @@ function reset(bank,state,now=Date.now()){
 }
 function reviewRecord(r){
  if(!obj(r)||!time(r.dueAt))return null;
- return {dueAt:time(r.dueAt),lastReviewedAt:time(r.lastReviewedAt),intervalDays:Math.min(180,Math.max(0,Number(r.intervalDays)||0)),repetitions:Math.min(100000,Math.max(0,Number(r.repetitions)||0)),lapses:Math.min(100000,Math.max(0,Number(r.lapses)||0)),grade:ratings.includes(r.grade)?r.grade:'review'};
+ return {taskId:text(r.taskId,200),dueAt:time(r.dueAt),lastReviewedAt:time(r.lastReviewedAt),intervalDays:Math.min(180,Math.max(0,Number(r.intervalDays)||0)),repetitions:Math.min(100000,Math.max(0,Number(r.repetitions)||0)),lapses:Math.min(100000,Math.max(0,Number(r.lapses)||0)),grade:ratings.includes(r.grade)?r.grade:'review'};
 }
 function normalize(raw,bank,now=Date.now()){
  const state=fresh(bank),ids=new Set(bank.map(q=>q.id)),byId=new Map(bank.map(q=>[q.id,q]));
  if(!obj(raw)||![1,2].includes(raw.version))return state;
  const dates=new Set(['全部','基础','每日',...bank.map(q=>q.sourceDate).filter(Boolean)]);
- state.query=text(raw.query,120);if(statuses.includes(raw.status))state.status=raw.status;
+ state.query=text(raw.query,120);if(['all','question','reference','personal'].includes(raw.searchScope))state.searchScope=raw.searchScope;if(statuses.includes(raw.status))state.status=raw.status;
  if(dates.has(raw.source))state.source=raw.source;
  if(projects.includes(raw.project))state.project=raw.project;
  if(raw.module==='全部'||bank.some(q=>q.module===raw.module))state.module=raw.module;
@@ -72,7 +72,7 @@ function normalize(raw,bank,now=Date.now()){
    if(byId.get(id).manual){if(typeof a==='string'&&a.trim())answers[id]=text(a);}
    else if(Number.isInteger(a)&&a>=0&&a<(byId.get(id).choices?.length||4))answers[id]=a;
   }
-  state.exam={ids:[...ex.ids],answers,index:Number.isInteger(ex.index)?Math.max(0,Math.min(ex.ids.length-1,ex.index)):0,submitted:ex.submitted===true&&(ex.autoSubmitted===true||ex.ids.every(id=>own(answers,id))),autoSubmitted:ex.autoSubmitted===true,startedAt:time(ex.startedAt),deadlineAt:time(ex.deadlineAt),finishedAt:time(ex.finishedAt)};
+  state.exam={id:text(ex.id,150)||'exam-'+time(ex.startedAt)+'-'+fingerprint(ex.ids.join(',')),ids:[...ex.ids],answers,index:Number.isInteger(ex.index)?Math.max(0,Math.min(ex.ids.length-1,ex.index)):0,submitted:ex.submitted===true&&(ex.autoSubmitted===true||ex.ids.every(id=>own(answers,id))),autoSubmitted:ex.autoSubmitted===true,startedAt:time(ex.startedAt),deadlineAt:time(ex.deadlineAt),finishedAt:time(ex.finishedAt)};
  }
  if(obj(raw.lastTest)&&Number.isInteger(raw.lastTest.total)&&raw.lastTest.total>=0&&raw.lastTest.total<=20&&Number.isInteger(raw.lastTest.correct)&&raw.lastTest.correct>=0&&raw.lastTest.correct<=raw.lastTest.total)state.lastTest={correct:raw.lastTest.correct,total:raw.lastTest.total,manual:Math.min(20,Math.max(0,Number(raw.lastTest.manual)||0)),answered:Math.min(20,Math.max(0,Number(raw.lastTest.answered)||0)),at:time(raw.lastTest.at)};
  const cleanInterview=v=>{
@@ -86,6 +86,7 @@ function normalize(raw,bank,now=Date.now()){
  state.interviewHistory=(Array.isArray(raw.interviewHistory)?raw.interviewHistory:[]).map(cleanInterview).filter(v=>v?.submitted).slice(-10);
  if(state.mode==='interview'&&!state.interview)state.mode='interview';
  for(const [id,c] of Object.entries(state.cards))c.fieldUpdatedAt=fieldTimes({...c,fieldUpdatedAt:raw.cards?.[id]?.fieldUpdatedAt});
+ normalizeInsights(state,raw,ids,now);
  state.resetAt=time(raw.resetAt);state.updatedAt=time(raw.updatedAt);state.lastBackupAt=time(raw.lastBackupAt);
  return state;
 }
@@ -109,11 +110,11 @@ function recordActivity(state,id,now=Date.now()){
  const day=dayKey(now),a=state.activity[day]||(state.activity[day]={ids:[],updatedAt:0});
  if(!a.ids.includes(id))a.ids.push(id);a.updatedAt=now;state.updatedAt=now;
 }
-function submitAnswer(state,id,answer,now=Date.now()){
+function submitAnswer(state,id,answer,now=Date.now(),source='practice'){
  if(typeof answer!=='string'||!answer.trim()||answer.length>10000)throw Error('请填写有效回答，最多 10000 字符。');
  const e=state.entries[id]||(state.entries[id]={draft:'',submitted:'',rating:null,updatedAt:0,submittedAt:0});
  e.draft=answer;e.updatedAt=now;
- if(e.submitted!==answer){e.submitted=answer;e.submittedAt=now;e.rating=null;editCard(state,id,{pendingReview:true},now);}
+ if(e.submitted!==answer){if(e.submitted.trim())rememberAnswer(state,id,e.submitted,e.submittedAt||0,'saved');rememberAnswer(state,id,answer,now,source);e.submitted=answer;e.submittedAt=now;e.rating=null;editCard(state,id,{pendingReview:true},now);}
  recordActivity(state,id,now);return e;
 }
 function schedule(previous,grade,now=Date.now()){
@@ -121,15 +122,17 @@ function schedule(previous,grade,now=Date.now()){
  const prev=previous||{},interval=grade==='review'?0:grade==='basic'?Math.min(90,Math.max(1,Math.round((prev.intervalDays||0)*2))):Math.min(180,Math.max(3,Math.round((prev.intervalDays||0)*2.5)));
  return {dueAt:now+(grade==='review'?10*60000:interval*DAY),lastReviewedAt:now,intervalDays:interval,repetitions:(prev.repetitions||0)+1,lapses:(prev.lapses||0)+(grade==='review'?1:0),grade};
 }
-function rate(state,id,grade,now=Date.now(),objective=false){
+function rate(state,id,grade,now=Date.now(),objective=false,origin='self'){
  if(!ratings.includes(grade))throw Error('无效的掌握程度。');
  const e=state.entries[id],c=card(state,id),day=dayKey(now);
  if(!objective&&!e?.submitted?.trim())throw Error('先保存你的作答，再进行自评。');
- const attempt=e?.submittedAt||0,same=c.ratingDay===day&&c.ratedSubmissionAt===attempt&&!c.pendingReview;
+ const attempt=e?.submittedAt||0,same=c.ratingDay===day&&c.ratedSubmissionAt===attempt&&!c.pendingReview&&!isDue(state,id,now);
  if(same&&c.review?.grade===grade){recordActivity(state,id,now);return c.review;}
  const base=same?c.ratingBase:c.review;
- editCard(state,id,{ratingBase:clone(base),review:schedule(base,grade,now),ratingDay:day,ratedSubmissionAt:attempt,pendingReview:false},now);
+ const review=trackReview(state,id,schedule(base,grade,now),now,true);
+ editCard(state,id,{ratingBase:clone(base),review,ratingDay:day,ratedSubmissionAt:attempt,pendingReview:false},now);
  if(e){e.rating=grade;e.updatedAt=now;}
+ if(origin!=='objective')recordStudy(state,id,{kind:'self',grade},now,'self:'+id+':'+day+':'+attempt);
  recordActivity(state,id,now);return c.review;
 }
 function isCompleted(state,id){return Boolean(state.entries[id]?.submitted?.trim())||own(state.outcomes,id)||state.cards[id]?.interviewAnswered===true;}
@@ -233,6 +236,7 @@ function merge(local,incoming,bank,now=Date.now()){
  if(!a.interview&&!a.interviewHistory.length&&b.interview)out.interview=clone(b.interview);
  // Reset epochs belong to this browser. An explicit backup import can restore
  // old records without importing another device's reset history.
+ mergeInsights(out,a,b,now);
  out.resetAt=a.resetAt;out.updatedAt=Math.max(a.updatedAt,b.updatedAt);out.lastBackupAt=Math.max(a.lastBackupAt,b.lastBackupAt);
  return out;
 }
@@ -241,7 +245,118 @@ function sync(local,incoming,bank,now=Date.now()){
  if(a.resetAt!==b.resetAt)return clone(a.resetAt>b.resetAt?a:b);
  return merge(a,b,bank,now);
 }
+// Historical answers and report evidence are bounded, local-only records.
+function fingerprint(value){let h=2166136261;for(const ch of value){h^=ch.codePointAt(0);h=Math.imul(h,16777619);}return (h>>>0).toString(36);}
+function trimAnswerHistory(history){
+ const all=[];for(const [questionId,versions] of Object.entries(history))for(const v of versions)all.push({questionId,...v});
+ all.sort((a,b)=>b.at-a.at||a.id.localeCompare(b.id));const out={},counts={};
+ for(const {questionId,...v} of all){if((counts[questionId]||0)>=10)continue;if(Object.values(counts).reduce((n,v)=>n+v,0)>=100)break;(out[questionId]||(out[questionId]=[])).push(v);counts[questionId]=(counts[questionId]||0)+1;}return out;
+}
+function rememberAnswer(state,id,answer,at,source='saved'){
+ if(!answer?.trim())return;
+ const history=state.answerHistory||(state.answerHistory={}),versions=history[id]||(history[id]=[]);
+ if(!versions.some(v=>v.at===at&&v.answer===answer))versions.push({id:'answer:'+id+':'+at+':'+fingerprint(answer),answer,at,source});
+ state.answerHistory=trimAnswerHistory(history);
+}
+function answerVersions(state,id){
+ const history=clone(state.answerHistory?.[id]||[]),e=state.entries[id];
+ if(e?.submitted?.trim()&&!history.some(v=>v.answer===e.submitted&&v.at===(e.submittedAt||0)))history.push({id:'answer:'+id+':'+(e.submittedAt||0)+':'+fingerprint(e.submitted),answer:e.submitted,at:e.submittedAt||0,source:'saved'});
+ return history.sort((a,b)=>b.at-a.at||a.id.localeCompare(b.id));
+}
+function restoreAnswer(state,id,versionId,now=Date.now()){
+ const version=answerVersions(state,id).find(v=>v.id===versionId);if(!version)throw Error('这个历史版本已不存在，请重新打开历史记录。');
+ const e=state.entries[id];if(e?.draft?.trim()&&e.draft!==e.submitted)rememberAnswer(state,id,e.draft,now,'draft');
+ return submitAnswer(state,id,version.answer,now,'restore');
+}
+function recordStudy(state,questionId,fields,now=Date.now(),eventId=''){
+ const key='event:'+(eventId||questionId+':'+now+':'+Math.random().toString(36).slice(2)),old=state.studyLog?.[key];
+ (state.studyLog||(state.studyLog={}))[key]={questionId,kind:fields.kind,result:fields.result||null,grade:fields.grade||null,at:old?.at||now,updatedAt:Math.max(now,(old?.updatedAt||0)+1)};
+ state.reportStartedAt=state.reportStartedAt?Math.min(state.reportStartedAt,now):now;
+ trimEvidence(state,now);
+}
+function taskKey(id,dueAt){return 'review:'+id+':'+dueAt;}
+function trackReview(state,id,review,now=Date.now(),answered=false){
+ const tasks=state.reviewTasks||(state.reviewTasks={}),oldReview=state.cards[id]?.review;
+ let previous=oldReview?.taskId?tasks[oldReview.taskId]:null;
+ if(!previous&&oldReview){const key=taskKey(id,oldReview.dueAt);previous=tasks[key]||(tasks[key]={id:key,questionId:id,dueAt:oldReview.dueAt,createdAt:now,status:'pending',closedAt:0,updatedAt:now});}
+ if(previous?.status==='pending'){
+  if(!answered&&previous.dueAt<=now)return {...review,taskId:previous.id};
+  previous.status=answered&&previous.dueAt<=now?'done':'canceled';previous.closedAt=now;previous.updatedAt=Math.max(now,previous.updatedAt+1);
+ }
+ const key=taskKey(id,review.dueAt);tasks[key]={id:key,questionId:id,dueAt:review.dueAt,createdAt:now,status:'pending',closedAt:0,updatedAt:now};
+ state.reportStartedAt=state.reportStartedAt?Math.min(state.reportStartedAt,now):now;trimEvidence(state,now);return {...review,taskId:key};
+}
+function trimEvidence(state,now){
+ const cutoff=now-90*DAY;
+ state.studyLog=Object.fromEntries(Object.entries(state.studyLog||{}).filter(([,v])=>v.at>=cutoff).sort((a,b)=>b[1].at-a[1].at||a[0].localeCompare(b[0])).slice(0,2000));
+ const tasks=Object.entries(state.reviewTasks||{}),pending=tasks.filter(([,v])=>v.status==='pending'),closed=tasks.filter(([,v])=>v.status!=='pending'&&v.closedAt>=cutoff).sort((a,b)=>b[1].closedAt-a[1].closedAt).slice(0,1000);
+ state.reviewTasks=Object.fromEntries([...pending,...closed]);
+}
+function normalizeInsights(state,raw,ids,now){
+ state.answerHistory={};
+ for(const [id,versions] of Object.entries(obj(raw.answerHistory)?raw.answerHistory:{}))if(ids.has(id)&&Array.isArray(versions))for(const v of versions.slice(-100))if(obj(v)&&typeof v.answer==='string'&&v.answer.trim())rememberAnswer(state,id,text(v.answer),time(v.at),['practice','exam','restore','saved','draft'].includes(v.source)?v.source:'saved');
+ state.studyLog={};
+ for(const [key,v] of Object.entries(obj(raw.studyLog)?raw.studyLog:{}))if(key.startsWith('event:')&&key.length<=400&&obj(v)&&ids.has(v.questionId)&&time(v.at)&&(['objective','self'].includes(v.kind))){
+  if(v.kind==='objective'&&!['correct','wrong','missed'].includes(v.result)||v.kind==='self'&&!ratings.includes(v.grade))continue;
+  state.studyLog[key]={questionId:v.questionId,kind:v.kind,result:v.kind==='objective'?v.result:null,grade:v.kind==='self'?v.grade:null,at:time(v.at),updatedAt:time(v.updatedAt)||time(v.at)};
+ }
+ state.reviewTasks={};
+ for(const v of Object.values(obj(raw.reviewTasks)?raw.reviewTasks:{}))if(obj(v)&&ids.has(v.questionId)&&time(v.dueAt)&&['pending','done','canceled'].includes(v.status)){
+  const id=taskKey(v.questionId,v.dueAt);state.reviewTasks[id]={id,questionId:v.questionId,dueAt:time(v.dueAt),createdAt:time(v.createdAt)||now,status:v.status,closedAt:time(v.closedAt),updatedAt:time(v.updatedAt)||now};
+ }
+ for(const [id,c] of Object.entries(state.cards))if(c.review){
+  const key=state.reviewTasks[c.review.taskId]?.questionId===id?c.review.taskId:taskKey(id,c.review.dueAt);
+  if(!state.reviewTasks[key])state.reviewTasks[key]={id:key,questionId:id,dueAt:c.review.dueAt,createdAt:now,status:'pending',closedAt:0,updatedAt:now};c.review.taskId=key;
+ }
+ state.reportStartedAt=time(raw.reportStartedAt)||now;trimEvidence(state,now);
+}
+function mergeInsights(out,a,b,now){
+ out.answerHistory={};for(const source of [a,b])for(const [id,versions] of Object.entries(source.answerHistory))for(const v of versions)rememberAnswer(out,id,v.answer,v.at,v.source);
+ out.studyLog=clone(a.studyLog);for(const [id,v] of Object.entries(b.studyLog))if(!out.studyLog[id]||v.updatedAt>out.studyLog[id].updatedAt)out.studyLog[id]=clone(v);
+ out.reviewTasks=clone(a.reviewTasks);for(const [id,v] of Object.entries(b.reviewTasks))if(!out.reviewTasks[id]||v.updatedAt>out.reviewTasks[id].updatedAt||v.updatedAt===out.reviewTasks[id].updatedAt&&v.status==='done')out.reviewTasks[id]=clone(v);
+ for(const task of Object.values(out.reviewTasks))if(task.status==='pending'){
+  const c=out.cards[task.questionId];if(c?.review?.taskId&&c.review.taskId!==task.id){task.status='canceled';task.closedAt=c.review.lastReviewedAt||now;task.updatedAt=Math.max(task.updatedAt,c.fieldUpdatedAt.review);}
+ }
+ out.reportStartedAt=Math.min(a.reportStartedAt||now,b.reportStartedAt||now);trimEvidence(out,now);
+}
+function weekReport(bank,state,offset=0,now=Date.now()){
+ offset=Number.isInteger(offset)?Math.max(0,Math.min(8,offset)):0;
+ const today=dayKey(now),weekday=new Date(today+'T12:00:00+08:00').getUTCDay(),start=addDays(today,-((weekday+6)%7)-offset*7),end=addDays(start,6),from=Date.parse(start+'T00:00:00+08:00'),until=Math.min(now,from+7*DAY-1);
+ const days=Array.from({length:7},(_,i)=>{const day=addDays(start,i);return {day,ids:day<=today?[...new Set(state.activity[day]?.ids||[])]:[]};}),unique=new Set(days.flatMap(d=>d.ids));
+ const events=Object.values(state.studyLog||{}).filter(v=>v.at>=from&&v.at<=until),objective=events.filter(v=>v.kind==='objective'),answered=objective.filter(v=>v.result!=='missed'),correct=answered.filter(v=>v.result==='correct').length;
+ const latestSelf=new Map();for(const e of events.filter(v=>v.kind==='self'))if(!latestSelf.has(e.questionId)||e.updatedAt>latestSelf.get(e.questionId).updatedAt)latestSelf.set(e.questionId,e);
+ const self={review:0,basic:0,fluent:0};for(const v of latestSelf.values())self[v.grade]++;
+ const eligible=Object.values(state.reviewTasks||{}).filter(t=>t.createdAt<=until&&t.dueAt<=until&&(!(t.status==='canceled'&&t.closedAt<=until))&&(!(t.status==='done'&&t.closedAt<from)));
+ const reviewDone=eligible.filter(t=>t.status==='done'&&t.closedAt<=until).length;
+ const modules=[...new Set(bank.map(q=>q.module))].map(module=>{
+  const ids=new Set(bank.filter(q=>q.module===module).map(q=>q.id)),attempts=answered.filter(e=>ids.has(e.questionId)),graded=[...latestSelf.values()].filter(e=>ids.has(e.questionId));
+  return {module,practiced:[...unique].filter(id=>ids.has(id)).length,objective:attempts.length,correct:attempts.filter(e=>e.result==='correct').length,self:graded.length,needsReview:graded.filter(e=>e.grade==='review').length};
+ });
+ return {start,end,days,unique:unique.size,practiceCount:days.reduce((n,d)=>n+d.ids.length,0),activeDays:days.filter(d=>d.ids.length).length,objective:{correct,answered:answered.length,missed:objective.length-answered.length,accuracy:answered.length?Math.round(correct/answered.length*100):null},self,selfTotal:latestSelf.size,reviews:{done:reviewDone,total:eligible.length,pending:eligible.length-reviewDone,rate:eligible.length?Math.round(reviewDone/eligible.length*100):null},modules,trackedSince:state.reportStartedAt||now};
+}
+function diffAnswers(before,after){
+ const a=String(before).match(/[^\n]*\n|[^\n]+$/g)||[],b=String(after).match(/[^\n]*\n|[^\n]+$/g)||[],left=[],right=[];
+ if(before===after)return {before:[{text:before,changed:false}],after:[{text:after,changed:false}]};
+ if(a.length*b.length>62500)return {before:[{text:before,changed:true}],after:[{text:after,changed:true}]};
+ const matrix=Array.from({length:a.length+1},()=>new Uint16Array(b.length+1));
+ for(let i=a.length-1;i>=0;i--)for(let j=b.length-1;j>=0;j--)matrix[i][j]=a[i]===b[j]?matrix[i+1][j+1]+1:Math.max(matrix[i+1][j],matrix[i][j+1]);
+ let i=0,j=0;while(i<a.length||j<b.length){if(i<a.length&&j<b.length&&a[i]===b[j]){left.push({text:a[i++],changed:false});right.push({text:b[j++],changed:false});}else if(i<a.length&&(j===b.length||matrix[i+1][j]>=matrix[i][j+1]))left.push({text:a[i++],changed:true});else right.push({text:b[j++],changed:true});}
+ return {before:left,after:right};
+}
+
+function reportMarkdown(report){
+ const o=report.objective,r=report.reviews;
+ return '# 面试练习周报\n\n'+report.start+' 至 '+report.end+'（北京时间）\n\n'+
+  '- 练习量：'+report.practiceCount+' 题次，覆盖 '+report.unique+' 道题，练习 '+report.activeDays+' 天\n'+
+  '- 客观题：'+o.correct+'/'+o.answered+' 答对，正确率 '+(o.accuracy==null?'暂无数据':o.accuracy+'%')+'，另有 '+o.missed+' 题未答\n'+
+  '- 表达自评：需要复习 '+report.self.review+'，基本掌握 '+report.self.basic+'，熟练表达 '+report.self.fluent+'\n'+
+  '- 到期复习任务：完成 '+r.done+'/'+r.total+'，完成率 '+(r.rate==null?'暂无到期任务':r.rate+'%')+'\n\n'+
+  '| 日期 | 练习题数 |\n| --- | --- |\n'+report.days.map(d=>'| '+d.day+' | '+d.ids.length+' |').join('\n')+'\n\n'+
+  '| 模块 | 练习题数 | 客观题答对/已答 | 文字表达自评题数 |\n| --- | --- | --- | --- |\n'+report.modules.map(m=>'| '+m.module+' | '+m.practiced+' | '+m.correct+'/'+m.objective+' | '+m.self+' |').join('\n')+'\n\n'+
+  '同一天同题只计一次练习量；跨天重复练习计为多次。客观题正确率仅统计已答题，未答单列；表达自评取每题本周最后一次评价，不能当作正确率。到期任务包括本周到期及此前未完成任务，提前调整的任务不计入。旧练习量保留；详细成绩与复习任务从 '+dayKey(report.trackedSince)+' 起记录。明细保留最近 90 天，最多 2000 条成绩记录。\n';
+}
+
 function backup(state,now=Date.now()){return JSON.stringify({format:'cpp-interview-lab-backup',schemaVersion:2,exportedAt:new Date(now).toISOString(),state},null,2);}
-const api={KEY,LEGACY_KEY,DAY,dayKey,addDays,validDay,fresh,reset,normalize,load,clone,card,editCard,submitAnswer,recordActivity,schedule,rate,isCompleted,needsReview,isDue,inReviewDay,mastery,makePlan,ensurePlan,validateExamOptions,sample,buildInterview,finishInterview,parseBackup,merge,sync,backup,projectOf};
+const api={diffAnswers,rememberAnswer,answerVersions,restoreAnswer,recordStudy,trackReview,weekReport,reportMarkdown,KEY,LEGACY_KEY,DAY,dayKey,addDays,validDay,fresh,reset,normalize,load,clone,card,editCard,submitAnswer,recordActivity,schedule,rate,isCompleted,needsReview,isDue,inReviewDay,mastery,makePlan,ensurePlan,validateExamOptions,sample,buildInterview,finishInterview,parseBackup,merge,sync,backup,projectOf};
 if(typeof module==='object'&&module.exports)module.exports=api;else root.LearningCore=api;
 })(typeof window==='object'?window:globalThis);
