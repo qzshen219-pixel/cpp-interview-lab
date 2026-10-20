@@ -179,3 +179,53 @@ test('empty history is explained and selecting reference scope opens its matchin
  const b=boot();t.after(b.close);b.click('[data-answer-history]');assert.equal(b.$('#answer-history-empty').hidden,false);assert.equal(b.$('#answer-comparison').hidden,true);b.click('#answer-history-close');
  b.value('#search-scope','reference');b.value('#question-search',b.app.bank[0].answer[0].slice(0,12));assert.equal(b.$('.answer-details').open,true);
 });
+
+test('knowledge point filters, header chips and WebMCP use the same question set',t=>{
+ const b=boot({mobile:true});t.after(b.close);b.value('#topic-filter','cpp-stl');assert.equal(b.state().topic,'cpp-stl');assert.ok(b.app.filtered().length>10);assert.ok(b.app.filtered().every(q=>b.w.LearningPaths.classify(q).includes('cpp-stl')));
+ const expected=b.app.filtered().map(q=>q.id),tool=b.tools.find(t=>t.name==='filter_practice_questions'),r=tool.execute({module:'全部',type:'全部',topic:'cpp-stl'});assert.equal(r.count,expected.length);
+ const c=boot({local:b.stored(),mobile:true});t.after(c.close);assert.equal(c.$('#topic-filter').value,'cpp-stl');assert.equal(c.$('#mobile-filter-toggle').getAttribute('aria-expanded'),'true');
+ b.click('#clear-all-filter');const button=b.$('[data-topic]'),topic=button.dataset.topic;b.click('[data-topic]');assert.equal(b.state().topic,topic);assert.equal(b.state().routeActive,'');
+});
+test('a route stage keeps its selected questions and progress when reopening',t=>{
+ const b=boot();t.after(b.close);const daily=JSON.stringify(b.state().dailyPlan);b.click('#paths-open');assert.equal(b.$('#paths-dialog').open,true);assert.equal(b.$('#path-stages').children.length,6);b.click('[data-start-stage="backend:stl"]');
+ assert.equal(b.state().routeActive,'backend:stl');assert.equal(b.app.filtered().length,10);assert.equal(b.$('#route-session-banner').hidden,false);const ids=Array.from(b.state().routeSessions['backend:stl'].ids),first=b.state().current;
+ b.value('#draft','阶段中的第一份作答','input');b.click('#save-answer');assert.match(b.$('#route-session-progress').textContent,/已作答 1 \/ 10/);assert.equal(JSON.stringify(b.state().dailyPlan),daily);
+ const c=boot({local:b.stored()});t.after(c.close);assert.deepEqual(Array.from(c.state().routeSessions['backend:stl'].ids),ids);c.click('#paths-open');c.click('[data-start-stage="backend:stl"]');assert.notEqual(c.state().current,first);assert.deepEqual(Array.from(c.state().routeSessions['backend:stl'].ids),ids);
+ c.click('#route-leave');assert.equal(c.state().routeActive,'');assert.equal(c.app.filtered().length,1279);assert.ok(c.state().routeSessions['backend:stl']);
+});
+test('the operations route exposes five stages and daily/favorite scopes exit a route cleanly',t=>{
+ const b=boot();t.after(b.close);b.click('#paths-open');b.click('[data-path-choice="ops"]');assert.equal(b.$('#path-stages').children.length,5);b.click('[data-start-stage="ops:proxy"]');assert.equal(b.state().routeActive,'ops:proxy');assert.ok(b.app.filtered().every(q=>q.module==='Nginx'));
+ b.click('[data-favorite]');b.click('[data-scope="favorite"]');assert.equal(b.state().routeActive,'');assert.equal(b.state().topic,'all');assert.equal(b.app.filtered().length,1);
+ b.click('#daily-start');assert.equal(b.state().routeActive,'');assert.equal(b.state().status,'plan');assert.equal(b.app.filtered().length,10);
+});
+test('reselecting a stage requires confirmation and preserves existing answers and history',t=>{
+ const b=boot();t.after(b.close);b.app.openRoute('backend:stl');const id=b.state().current,original=JSON.stringify(b.state().routeSessions['backend:stl'].ids);
+ b.value('#draft','需要保留的旧作答','input');b.click('#save-answer');b.click('[data-rating="basic"]');b.click('#paths-open');b.click('[data-repick-stage="backend:stl"]');b.click('#cancel-dialog');assert.equal(JSON.stringify(b.state().routeSessions['backend:stl'].ids),original);
+ b.click('#paths-open');b.click('[data-repick-stage="backend:stl"]');b.click('#confirm-dialog-action');assert.equal(b.state().entries[id].submitted,'需要保留的旧作答');assert.ok(b.app.C.answerVersions(b.state(),id).length);assert.ok(!b.state().routeSessions['backend:stl'].ids.includes(id));
+});
+test('course tests stay inside the stage and cannot switch stages while active',t=>{
+ const b=boot();t.after(b.close);b.app.openRoute('backend:stl');const ids=Array.from(b.state().routeSessions['backend:stl'].ids);b.click('#exam-tab');b.value('#exam-count','20');b.click('#start-exam');assert.ok(b.state().exam.ids.every(id=>ids.includes(id)));assert.equal(b.state().exam.ids.length,10);
+ assert.equal(b.$('#topic-filter').disabled,true);assert.equal(b.$('[data-topic]').disabled,true);b.click('#paths-open');assert.ok([...b.w.document.querySelectorAll('[data-start-stage]')].every(button=>button.disabled));assert.throws(()=>b.app.openRoute('ops:linux'),/先结束/);
+});
+test('focus layout preserves the textarea and unsaved answer, survives reopen and exits by Escape',t=>{
+ const b=boot({mobile:true});t.after(b.close);const textarea=b.$('#draft');b.value('#draft','专注前尚未保存的草稿','input');b.click('#focus-toggle');assert.equal(b.state().focusMode,true);assert.equal(b.$('#draft'),textarea);assert.equal(b.$('#draft').value,'专注前尚未保存的草稿');assert.equal(b.$('#focus-bar').hidden,false);assert.ok(b.w.document.documentElement.classList.contains('focus-mode'));assert.match(b.$('#focus-save').textContent,/已自动保存/);
+ const c=boot({local:b.stored(),mobile:true});t.after(c.close);assert.equal(c.state().focusMode,true);assert.equal(c.$('#focus-bar').hidden,false);
+ c.w.document.dispatchEvent(new c.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));assert.equal(c.state().focusMode,false);assert.equal(c.$('#draft').value,'专注前尚未保存的草稿');assert.equal(c.$('#focus-bar').hidden,true);
+});
+test('focus does not intercept dialog Escape or interrupt a timed assessment',t=>{
+ const b=boot();t.after(b.close);b.click('#focus-toggle');b.click('[data-answer-history]');b.w.document.dispatchEvent(new b.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(b.state().focusMode,true);b.click('#answer-history-close');b.click('#focus-exit');
+ b.value('#project-filter','通用');b.value('#source-filter','基础');b.click('#exam-tab');b.value('#exam-count','5');b.value('#exam-minutes','5');b.click('#start-exam');const id=b.state().exam.id,deadline=b.state().exam.deadlineAt;b.click('#focus-toggle');assert.equal(b.state().exam.id,id);assert.equal(b.state().exam.deadlineAt,deadline);assert.ok(b.$('[data-countdown]'));b.advance(300001);assert.equal(b.state().exam.submitted,true);assert.equal(b.state().focusMode,true);b.click('#focus-exit');assert.equal(b.state().exam.id,id);
+});
+test('related-question navigation keeps learning records and clears the narrow scope',t=>{
+ const b=boot();t.after(b.close);b.app.openRoute('backend:stl');const current=b.state().current;b.value('#draft','关联练习前的草稿','input');const next=b.$('[data-related-question]').dataset.relatedQuestion;b.click('[data-related-question]');assert.equal(b.state().current,next);assert.equal(b.state().routeActive,'');assert.equal(b.state().topic,'all');assert.equal(b.state().entries[current].draft,'关联练习前的草稿');
+});
+
+test('remote reset clears the focused course layout and current stage',t=>{
+ const b=boot();t.after(b.close);b.app.openRoute('backend:stl');b.click('#focus-toggle');const raw=JSON.stringify(b.app.C.reset(b.app.bank,b.state(),NOW+1000));
+ b.w.localStorage.setItem(b.app.C.KEY,raw);b.w.dispatchEvent(new b.w.StorageEvent('storage',{key:b.app.C.KEY,newValue:raw}));assert.equal(b.state().routeActive,'');assert.equal(b.state().focusMode,false);assert.equal(b.$('#focus-bar').hidden,true);assert.equal(b.$('#route-session-banner').hidden,true);assert.equal(b.w.document.documentElement.classList.contains('focus-mode'),false);
+});
+
+test('another page saving its first answer cannot exit this page focus mode or knowledge filter',t=>{
+ const b=boot();t.after(b.close);b.value('#topic-filter','cpp-stl');b.click('#focus-toggle');const incoming=b.app.C.fresh(b.app.bank);b.app.C.submitAnswer(incoming,b.app.bank[0].id,'另一页面的新答案',NOW+1000);const raw=JSON.stringify(incoming);
+ b.w.localStorage.setItem(b.app.C.KEY,raw);b.w.dispatchEvent(new b.w.StorageEvent('storage',{key:b.app.C.KEY,newValue:raw}));assert.equal(b.state().focusMode,true);assert.equal(b.state().topic,'cpp-stl');assert.equal(b.$('#focus-bar').hidden,false);assert.equal(b.state().entries[b.app.bank[0].id].submitted,'另一页面的新答案');
+});

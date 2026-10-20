@@ -1,6 +1,7 @@
 /* Learning records stay on this device. This module has no network access. */
 (function(root){
 'use strict';
+const Paths=typeof module==='object'&&module.exports?require('./learning-paths.js'):root.LearningPaths;
 const KEY='cpp-interview-learning-v2',LEGACY_KEY='cpp-interview-session-v1',DAY=86400000;
 const own=(o,k)=>Object.prototype.hasOwnProperty.call(o,k);
 const obj=v=>Boolean(v)&&typeof v==='object'&&!Array.isArray(v);
@@ -19,7 +20,7 @@ function dayKey(now=Date.now()){
 function validDay(v){if(typeof v!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(v))return false;const n=Date.parse(v+'T12:00:00+08:00');return Number.isFinite(n)&&dayKey(n)===v;}
 function addDays(day,n){return dayKey(Date.parse(day+'T12:00:00+08:00')+n*DAY);}
 function projectOf(q){return q.project||(/\bIM\b|即时通[讯信]|聊天|client_msg|outbox/i.test([q.title,q.prompt,q.sourceRoundTitle||''].join(' '))?'IM':'通用');}
-function fresh(bank){return {version:2,resetAt:0,query:'',searchScope:'all',answerHistory:{},studyLog:{},reviewTasks:{},reportStartedAt:0,status:'all',source:'全部',project:'全部',module:'全部',type:'全部',mode:'practice',current:bank[0]?.id||null,entries:{},outcomes:{},cards:{},activity:{},settings:{dailyTarget:10,dailyProject:'全部'},examOptions:{count:10,minutes:0,reviewFirst:true,ratios:[40,40,20]},dailyPlan:null,exam:null,lastTest:null,interview:null,interviewHistory:[],updatedAt:0,lastBackupAt:0};}
+function fresh(bank){return {version:2,resetAt:0,topic:'all',routeActive:'',routeSessions:{},focusMode:false,query:'',searchScope:'all',answerHistory:{},studyLog:{},reviewTasks:{},reportStartedAt:0,status:'all',source:'全部',project:'全部',module:'全部',type:'全部',mode:'practice',current:bank[0]?.id||null,entries:{},outcomes:{},cards:{},activity:{},settings:{dailyTarget:10,dailyProject:'全部'},examOptions:{count:10,minutes:0,reviewFirst:true,ratios:[40,40,20]},dailyPlan:null,exam:null,lastTest:null,interview:null,interviewHistory:[],updatedAt:0,lastBackupAt:0};}
 function fieldTimes(c){
  const old=time(c.updatedAt),known=obj(c.fieldUpdatedAt)?c.fieldUpdatedAt:{};
  // Old backups do not identify which field changed. An absent note or schedule
@@ -37,6 +38,7 @@ function reviewRecord(r){
 function normalize(raw,bank,now=Date.now()){
  const state=fresh(bank),ids=new Set(bank.map(q=>q.id)),byId=new Map(bank.map(q=>[q.id,q]));
  if(!obj(raw)||![1,2].includes(raw.version))return state;
+ state.topic=Paths.TOPICS.some(t=>t.id===raw.topic)?raw.topic:'all';state.focusMode=raw.focusMode===true;state.routeSessions=Paths.cleanSessions(raw.routeSessions,bank);if(typeof raw.routeActive==='string'&&own(state.routeSessions,raw.routeActive))state.routeActive=raw.routeActive;
  const dates=new Set(['全部','基础','每日',...bank.map(q=>q.sourceDate).filter(Boolean)]);
  state.query=text(raw.query,120);if(['all','question','reference','personal'].includes(raw.searchScope))state.searchScope=raw.searchScope;if(statuses.includes(raw.status))state.status=raw.status;
  if(dates.has(raw.source))state.source=raw.source;
@@ -218,7 +220,7 @@ function parseBackup(raw,bank,now=Date.now()){
 }
 function merge(local,incoming,bank,now=Date.now()){
  const a=normalize(local,bank,now),b=normalize(incoming,bank,now);
- const empty=!Object.keys(a.entries).length&&!Object.keys(a.cards).length&&!Object.keys(a.outcomes).length&&!Object.keys(a.activity).length&&!a.exam&&!a.interview&&!a.interviewHistory.length;
+ const empty=!Object.keys(a.entries).length&&!Object.keys(a.cards).length&&!Object.keys(a.outcomes).length&&!Object.keys(a.activity).length&&!a.exam&&!a.interview&&!a.interviewHistory.length&&!Object.keys(a.routeSessions).length;
  const out=clone(empty?b:a);
  for(const [id,e] of Object.entries(b.entries))if(!out.entries[id]||e.updatedAt>out.entries[id].updatedAt||(e.updatedAt===out.entries[id].updatedAt&&!out.entries[id].submitted&&e.submitted))out.entries[id]=clone(e);
  for(const [id,c] of Object.entries(b.cards)){
@@ -236,6 +238,7 @@ function merge(local,incoming,bank,now=Date.now()){
  if(!a.interview&&!a.interviewHistory.length&&b.interview)out.interview=clone(b.interview);
  // Reset epochs belong to this browser. An explicit backup import can restore
  // old records without importing another device's reset history.
+ for(const [key,session] of Object.entries(b.routeSessions))if(!out.routeSessions[key]||session.updatedAt>out.routeSessions[key].updatedAt)out.routeSessions[key]=clone(session);
  mergeInsights(out,a,b,now);
  out.resetAt=a.resetAt;out.updatedAt=Math.max(a.updatedAt,b.updatedAt);out.lastBackupAt=Math.max(a.lastBackupAt,b.lastBackupAt);
  return out;
@@ -243,7 +246,10 @@ function merge(local,incoming,bank,now=Date.now()){
 function sync(local,incoming,bank,now=Date.now()){
  const a=normalize(local,bank,now),b=normalize(incoming,bank,now);
  if(a.resetAt!==b.resetAt)return clone(a.resetAt>b.resetAt?a:b);
- return merge(a,b,bank,now);
+ const out=merge(a,b,bank,now);
+ // Learning evidence is shared; the current page keeps its view and session.
+ for(const key of ['query','searchScope','topic','routeActive','focusMode','source','project','module','type','status','reviewDate','mode','current','exam','interview','examOptions','settings','dailyPlan'])out[key]=clone(a[key]);
+ return out;
 }
 // Historical answers and report evidence are bounded, local-only records.
 function fingerprint(value){let h=2166136261;for(const ch of value){h^=ch.codePointAt(0);h=Math.imul(h,16777619);}return (h>>>0).toString(36);}

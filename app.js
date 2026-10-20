@@ -5,20 +5,23 @@ const C=window.LearningCore, key=C.KEY, $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const dates=[...new Set(bank.map(q=>q.sourceDate).filter(Boolean))].sort().reverse();
 $('source-filter').innerHTML+='<option value="每日">全部每日练习</option>'+dates.map(date=>`<option value="${date}">${date} 每日练习</option>`).join('');
+const P=window.LearningPaths,topicIndex=P.index(bank);
 const projectOf=C.projectOf;
 const S=window.LearningSearch,searchIndex=S.createIndex(bank);let searchTimer=null,searchPending=false;
+$('topic-filter').innerHTML='<option value="all">全部知识点</option>'+Object.keys(info).map(module=>`<optgroup label="${esc(module)}">${P.TOPICS.filter(t=>t.module===module).map(t=>`<option value="${t.id}">${esc(t.label)} · ${bank.filter(q=>topicIndex.get(q.id).includes(t.id)).length} 题</option>`).join('')}</optgroup>`).join('');
 let visibleCount=60,localStore,sessionStore;
 try{localStore=window.localStorage;}catch{}try{sessionStore=window.sessionStorage;}catch{}
 const fresh=()=>C.fresh(bank),restored=C.load(bank,localStore,sessionStore);
 let state=restored.state,storageOK=true,toastTimer,confirmAction,receivingStorage=false;
 let saveTimer=null,pendingSave=false,pendingHub=false,lastStoredRaw=null;
-let listExpanded=false,filtersExpanded=state.project!=='全部'||state.module!=='全部'||state.type!=='全部'||state.source!=='全部'||Boolean(state.query)||state.status!=='all'||state.searchScope!=='all';
+let listExpanded=false,filtersExpanded=state.project!=='全部'||state.module!=='全部'||state.type!=='全部'||state.source!=='全部'||Boolean(state.query)||state.status!=='all'||state.searchScope!=='all'||state.topic!=='all'||Boolean(state.routeActive);
 function setListExpanded(on){listExpanded=on;document.documentElement?.classList.toggle('questions-open',on);$('mobile-list-toggle').setAttribute('aria-expanded',on);$('mobile-list-toggle').textContent=`${on?'收起':'展开'}列表 · ${listQuestions().length}`;}
 function setFiltersExpanded(on){filtersExpanded=on;document.documentElement?.classList.toggle('filters-open',on);$('mobile-filter-toggle').setAttribute('aria-expanded',on);}
 setListExpanded(false);setFiltersExpanded(filtersExpanded);
 function notify(message){clearTimeout(toastTimer);$('toast').textContent=message;$('toast').classList.add('visible');toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),3200);}
 function saveLabels(){
  const status=$('storage-status');if(status){status.textContent=pendingSave?'正在保存最新输入…':storageOK?'学习记录已自动保存在此设备':'自动保存未成功，请先导出备份';status.classList.toggle('storage-warning',!storageOK);}
+ if($('focus-save'))$('focus-save').textContent=pendingSave?'正在保存…':storageOK?'已自动保存到本机':'保存未成功，请退出专注导出备份';
  if($('note-save-status'))$('note-save-status').textContent=pendingSave?'笔记正在保存…':storageOK?'笔记已自动保存到本机':'尚未保存成功，请导出备份';
  if($('draft')&&$('save-status'))$('save-status').textContent=pendingSave?'草稿正在保存…':!storageOK?'草稿尚未保存成功，请导出备份':state.entries[state.current]?.submitted===$('draft').value&&$('draft').value?'已保存作答':'草稿已自动保存，点击保存作答后计入进度';
 }
@@ -48,12 +51,14 @@ function isCompleted(id){return C.isCompleted(state,id);}
 
 function filtered(){
  const words=S.terms(state.query),now=Date.now();
- const list=bank.filter(q=>(state.project==='全部'||projectOf(q)===state.project)&&(state.module==='全部'||q.module===state.module)&&(state.type==='全部'||q.type===state.type)&&(state.source==='全部'||state.source==='基础'&&!q.sourceDate||state.source==='每日'&&q.sourceDate||q.sourceDate===state.source)&&S.match(searchIndex.get(q.id),state,q.id,words,state.searchScope)&&(
+ const route=state.routeActive?state.routeSessions[state.routeActive]:null;
+ const list=bank.filter(q=>(!route||route.ids.includes(q.id))&&(state.topic==='all'||topicIndex.get(q.id).includes(state.topic))&&(state.project==='全部'||projectOf(q)===state.project)&&(state.module==='全部'||q.module===state.module)&&(state.type==='全部'||q.type===state.type)&&(state.source==='全部'||state.source==='基础'&&!q.sourceDate||state.source==='每日'&&q.sourceDate||q.sourceDate===state.source)&&S.match(searchIndex.get(q.id),state,q.id,words,state.searchScope)&&(
  state.status==='all'||state.status==='pending'&&!isCompleted(q.id)||state.status==='answered'&&isCompleted(q.id)||state.status==='review'&&needsReview(q.id)||state.status==='due'&&C.isDue(state,q.id,now)||state.status==='favorite'&&state.cards[q.id]?.favorite||state.status==='notes'&&state.cards[q.id]?.note?.trim()||state.status==='plan'&&state.dailyPlan?.ids.includes(q.id)||state.status==='calendar'&&C.inReviewDay(state,q.id,state.reviewDate||C.dayKey(now),now)));
- if(state.status==='plan'){const order=new Map(state.dailyPlan.ids.map((id,i)=>[id,i]));list.sort((a,b)=>order.get(a.id)-order.get(b.id));}return list;
+ if(route){const order=new Map(route.ids.map((id,i)=>[id,i]));list.sort((a,b)=>order.get(a.id)-order.get(b.id));}
+ else if(state.status==='plan'){const order=new Map(state.dailyPlan.ids.map((id,i)=>[id,i]));list.sort((a,b)=>order.get(a.id)-order.get(b.id));}return list;
 }
 
-function clearFilters(){searchPending=false;return configure('全部','全部','全部','','all','全部','all');}
+function clearFilters(){searchPending=false;return configure('全部','全部','全部','','all','全部','all','all','');}
 function revealActive(){if(window.matchMedia?.('(max-width: 700px)').matches){setListExpanded(false);$('question').scrollIntoView?.({block:'start',behavior:'auto'});$('question').focus({preventScroll:true});}else $('question-items').querySelector('[aria-current="true"]')?.scrollIntoView({block:'nearest',inline:'nearest',behavior:'auto'});}
 function completedIds(){return bank.filter(q=>isCompleted(q.id)).map(q=>q.id);}
 
@@ -104,6 +109,7 @@ function renderList(){
   const activeIndex=state.mode==='exam'&&state.exam?state.exam.index:list.findIndex(q=>q.id===state.current);
   visibleCount=Math.max(visibleCount,activeIndex+1);const shown=list.slice(0,visibleCount),remaining=list.length-shown.length;
   $('list-title').textContent=state.mode==='exam'&&state.exam?(state.exam.submitted?'自测回顾':'本轮自测'):(state.status==='calendar'?(state.reviewDate||C.dayKey())+' 复习':({plan:'今日计划',due:'到期复习',review:'需要强化',favorite:'我的收藏',notes:'个人笔记',pending:'未作答',answered:'已作答'}[state.status]||(state.module==='全部'?'全部题目':state.module)));
+  if(state.mode==='practice'){const part=P.stage(state.routeActive),topic=P.TOPICS.find(t=>t.id===state.topic);if(part)$('list-title').textContent=part.label+' · 阶段练习';else if(topic)$('list-title').textContent=state.status==='all'?topic.label:$('list-title').textContent+' · '+topic.label;}
   $('list-subtitle').textContent=state.mode==='exam'&&state.exam?(state.exam.submitted?'查看得分与错题解析':'可跳题，交卷后统一看答案'):`${list.length} 道题 · ${state.type==='全部'?'全部题型':state.type}`;
   $('mobile-list-toggle').textContent=`${listExpanded?'收起':'展开'}列表 · ${list.length}`;
   $('question-items').innerHTML=list.length?shown.map((q,i)=>{
@@ -160,7 +166,7 @@ function markdown(text){
   }
   return output.join('');
 }
-function questionHeader(q,i,n){return `<div class="question-tools"><span class="muted">${state.cards[q.id]?.review?'下次复习 '+new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(state.cards[q.id].review.dueAt):'先独立表达，再对照要点'}</span><button class="favorite-button" data-favorite="${esc(q.id)}" aria-pressed="${Boolean(state.cards[q.id]?.favorite)}">${state.cards[q.id]?.favorite?'★ 已收藏':'☆ 收藏'}</button></div><div class="q-top"><div class="badges"><span class="badge">${esc(q.module)}</span><span class="badge">${esc(q.type)}</span>${projectOf(q)!=='通用'?`<span class="badge">${esc(projectOf(q))} 项目</span>`:''}${q.priority?'<span class="badge focus">近期重点</span>':''}${q.sourceDate?`<span class="badge">${q.sourceDate} · 第 ${q.sourceRound} 轮</span>`:''}</div><span class="position">${String(i+1).padStart(2,'0')} / ${String(n).padStart(2,'0')}</span></div><h2>${esc(q.title)}</h2>${q.sourceDate?`<p class="daily-origin">${esc(q.sourceRoundTitle)}</p>`:''}${q.promptMarkdown?`<div class="prompt markdown">${markdown(q.promptMarkdown)}</div>`:`<p class="prompt">${esc(q.prompt)}</p>`}${q.code?codeMarkup(q.code,'cpp'):''}`;}
+function questionHeader(q,i,n){return `<div class="question-tools"><span class="muted">${state.cards[q.id]?.review?'下次复习 '+new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(state.cards[q.id].review.dueAt):'先独立表达，再对照要点'}</span><button class="favorite-button" data-favorite="${esc(q.id)}" aria-pressed="${Boolean(state.cards[q.id]?.favorite)}">${state.cards[q.id]?.favorite?'★ 已收藏':'☆ 收藏'}</button></div><div class="question-topic-tags" aria-label="本题知识点">${topicIndex.get(q.id).map(id=>{const t=P.TOPICS.find(t=>t.id===id);return `<button class="topic-chip" data-topic="${id}" ${activeAssessment()?'disabled':''}>${esc(t.label)}</button>`;}).join('')}</div><div class="q-top"><div class="badges"><span class="badge">${esc(q.module)}</span><span class="badge">${esc(q.type)}</span>${projectOf(q)!=='通用'?`<span class="badge">${esc(projectOf(q))} 项目</span>`:''}${q.priority?'<span class="badge focus">近期重点</span>':''}${q.sourceDate?`<span class="badge">${q.sourceDate} · 第 ${q.sourceRound} 轮</span>`:''}</div><span class="position">${String(i+1).padStart(2,'0')} / ${String(n).padStart(2,'0')}</span></div><h2>${esc(q.title)}</h2>${q.sourceDate?`<p class="daily-origin">${esc(q.sourceRoundTitle)}</p>`:''}${q.promptMarkdown?`<div class="prompt markdown">${markdown(q.promptMarkdown)}</div>`:`<p class="prompt">${esc(q.prompt)}</p>`}${q.code?codeMarkup(q.code,'cpp'):''}`;}
 function answerMarkup(q,open=false,practice=true){
   const e=state.entries[q.id];return `<details class="answer-details" ${open?'open':''}><summary>参考答案与易错点<span class="expand" aria-hidden="true">+</span></summary><div class="answer-content">${q.answerMarkdown?`<div class="markdown">${markdown(q.answerMarkdown)}</div>`:`<ol class="answer-points">${q.answer.map(a=>`<li>${esc(a)}</li>`).join('')}</ol><div class="pitfalls"><h3>易错点</h3><ul>${q.pitfalls.map(a=>`<li>${esc(a)}</li>`).join('')}</ul></div><div class="follow"><h3>面试追问</h3><p>${esc(q.follow)}</p></div>`}${q.project==='云盘'?`<a class="source" href="https://github.com/qzshen219-pixel/distributed-cloud-disk/blob/main/${esc(q.sourceFile)}" target="_blank" rel="noopener noreferrer">核对云盘源码 · ${esc(q.sourceFile.split('/').pop())}</a>`:''}${info[q.module].source?`<a class="source" href="${info[q.module].source}" target="_blank" rel="noopener noreferrer">延伸阅读 · ${esc(info[q.module].label)}</a>`:''}${practice?`<div class="self-eval"><span>对照答案后，标记本题掌握程度</span><div class="rating-buttons">${[['review','需要复习'],['basic','基本掌握'],['fluent','熟练表达']].map(([v,t])=>`<button data-rating="${v}" data-rating-id="${q.id}" aria-pressed="${e?.rating===v}" class="${e?.rating===v?'active':''}" ${e?.submitted?.trim()?'':'disabled'}>${t}</button>`).join('')}</div>${e?.submitted?.trim()?'':'<span class="muted">先保存你的作答，再进行自评。</span>'}</div>`:''}</div></details>`;
 }
@@ -168,7 +174,7 @@ function renderPractice(){
   const list=filtered();if(!list.some(q=>q.id===state.current))state.current=list[0]?.id||null;
   const q=byId.get(state.current);if(!q){$('question').innerHTML='<div class="exam-setup"><h2>没有匹配的题目</h2><p>试试更短的关键词，或调整来源、题型和练习状态。</p><button class="secondary" id="clear-filter">恢复全部题目</button></div>';return;}
   const i=list.indexOf(q),e=state.entries[q.id]||{draft:'',submitted:''};
-  $('question').innerHTML=questionHeader(q,i,list.length)+`<div class="answer-label"><label for="draft">你的回答</label><span id="char-count">${e.draft.length} / 10000 字符</span></div><textarea id="draft" maxlength="10000" placeholder="先说结论，再解释原理，最后举一个项目例子。">${esc(e.draft)}</textarea><div class="write-actions"><span class="save-status" id="save-status">${e.submitted&&e.submitted===e.draft?'已保存作答':e.draft?'草稿已自动保存，点击保存作答后计入进度':'草稿自动保存到此设备'}</span><button class="primary" id="save-answer">保存作答</button></div>${answerMarkup(q)}${noteMarkup(q)}<div class="answer-history-entry"><button class="secondary" data-answer-history="${esc(q.id)}">答案历史与恢复 <span>${C.answerVersions(state,q.id).length} 版</span></button><span class="muted">保存作答时保留版本，可比较和恢复。</span></div><div class="question-nav"><button class="secondary" data-nav="-1" ${i===0?'disabled':''}>上一题</button><span>按你的节奏，一题一题来</span><button class="secondary" data-nav="1" ${i===list.length-1?'disabled':''}>下一题</button></div>`;
+  $('question').innerHTML=questionHeader(q,i,list.length)+`<div class="answer-label"><label for="draft">你的回答</label><span id="char-count">${e.draft.length} / 10000 字符</span></div><textarea id="draft" maxlength="10000" placeholder="先说结论，再解释原理，最后举一个项目例子。">${esc(e.draft)}</textarea><div class="write-actions"><span class="save-status" id="save-status">${e.submitted&&e.submitted===e.draft?'已保存作答':e.draft?'草稿已自动保存，点击保存作答后计入进度':'草稿自动保存到此设备'}</span><button class="primary" id="save-answer">保存作答</button></div>${answerMarkup(q)}${noteMarkup(q)}<details class="related-questions"><summary>同知识点，再练几题</summary><div>${P.related(bank,q.id).map(other=>`<button class="related-question" data-related-question="${esc(other.id)}">${esc(other.title)}</button>`).join('')||'<span class="muted">暂无同知识点题目</span>'}</div></details><div class="answer-history-entry"><button class="secondary" data-answer-history="${esc(q.id)}">答案历史与恢复 <span>${C.answerVersions(state,q.id).length} 版</span></button><span class="muted">保存作答时保留版本，可比较和恢复。</span></div><div class="question-nav"><button class="secondary" data-nav="-1" ${i===0?'disabled':''}>上一题</button><span>按你的节奏，一题一题来</span><button class="secondary" data-nav="1" ${i===list.length-1?'disabled':''}>下一题</button></div>`;
 }
 function renderExamSetup(){
  const list=filtered(),o=state.examOptions,n=Math.min(o.count,list.length);
@@ -193,16 +199,16 @@ function render(){
  C.ensurePlan(bank,state);renderModules();
  if($('question-search').value!==state.query)$('question-search').value=state.query;
  const busy=Boolean(activeAssessment());
- for(const id of ['question-search','search-scope','status-filter','project-filter','source-filter','type-filter','mobile-filter-toggle'])$(id).disabled=busy;
- $('search-scope').value=state.searchScope;$('status-filter').value=state.status;$('project-filter').value=state.project;$('source-filter').value=state.source;$('type-filter').value=state.type;
- $('clear-all-filter').disabled=busy||(state.project==='全部'&&state.module==='全部'&&state.type==='全部'&&state.source==='全部'&&!state.query&&state.status==='all'&&state.searchScope==='all');
+ for(const id of ['question-search','search-scope','topic-filter','status-filter','project-filter','source-filter','type-filter','mobile-filter-toggle'])$(id).disabled=busy;
+ $('topic-filter').value=state.topic;$('search-scope').value=state.searchScope;$('status-filter').value=state.status;$('project-filter').value=state.project;$('source-filter').value=state.source;$('type-filter').value=state.type;
+ $('clear-all-filter').disabled=busy||(state.project==='全部'&&state.module==='全部'&&state.type==='全部'&&state.source==='全部'&&!state.query&&state.status==='all'&&state.searchScope==='all'&&state.topic==='all'&&!state.routeActive);
  const count=filtered().length;$('filter-count').textContent=`${count} 题`;$('mobile-filter-toggle').textContent=`筛选 · ${count} 题`;
  for(const mode of ['practice','exam','interview']){const tab=$(mode+'-tab');tab.setAttribute('aria-selected',state.mode===mode);tab.tabIndex=state.mode===mode?0:-1;}
  $('workspace').setAttribute('aria-labelledby',state.mode+'-tab');document.querySelector('.eyebrow').textContent=`C++ / 后端 · ${bank.length} 道题`;
  renderDetail();renderList();syncStats();persist();
 }
 
-function configure(module,type,source=state.source,query=state.query,status=state.status,project=state.project,searchScope=state.searchScope){
+function configure(module,type,source=state.source,query=state.query,status=state.status,project=state.project,searchScope=state.searchScope,topic=state.topic,routeActive=state.routeActive){
   if(searchPending&&query===state.query){query=$('question-search').value;searchScope=$('search-scope').value;}
   clearTimeout(searchTimer);searchTimer=null;searchPending=false;
   if(activeAssessment())throw new Error('请先完成或退出当前自测或项目面试。');
@@ -210,9 +216,12 @@ function configure(module,type,source=state.source,query=state.query,status=stat
   if(!['全部','概念题','场景题','代码题'].includes(type))throw new Error('无效题型。');
   if(!['全部','基础','每日',...dates].includes(source))throw new Error('无效来源。');
   if(!['全部','IM','云盘','通用'].includes(project))throw new Error('无效项目。');
+  if(topic!=='all'&&!P.TOPICS.some(t=>t.id===topic))throw new Error('无效的知识点。');
+  if(routeActive&&(!P.stage(routeActive)||!Object.hasOwn(state.routeSessions,routeActive)))throw new Error('这个训练阶段尚未开始。');
+  if(module!=='全部'&&topic!=='all'&&P.TOPICS.find(t=>t.id===topic).module!==module)topic='all';
   if(!['all','question','reference','personal'].includes(searchScope))throw new Error('无效的搜索范围。');
   if(typeof query!=='string'||query.length>120||!['all','pending','answered','review','due','favorite','notes','plan','calendar'].includes(status))throw new Error('无效的搜索或状态。');
-  visibleCount=60;state.module=module;state.type=type;state.source=source;state.query=query;state.searchScope=searchScope;state.status=status;state.project=project;if(state.mode==='exam')state.exam=null;render();return {count:filtered().length,module,type,source,query,status,project,searchScope};
+  visibleCount=60;state.module=module;state.type=type;state.source=source;state.query=query;state.searchScope=searchScope;state.topic=topic;state.routeActive=routeActive;state.status=status;state.project=project;if(state.mode==='exam')state.exam=null;render();return {count:filtered().length,module,type,source,query,status,project,searchScope,topic,routeActive};
 }
 function saveAnswer(id,text){
  if(!byId.has(id))throw new Error('无效题目。');if(activeAssessment())throw new Error('请先完成或退出当前自测或项目面试。');
@@ -261,6 +270,7 @@ function setMode(mode){
 
 $('modules').addEventListener('click',event=>{const button=event.target.closest('[data-module]');if(button&&!button.disabled)configure(button.dataset.module,state.type);});
 $('project-filter').addEventListener('change',()=>configure('全部','全部','全部','','all',$('project-filter').value));
+$('topic-filter').addEventListener('change',()=>configure(state.module,state.type,state.source,state.query,state.status,state.project,state.searchScope,$('topic-filter').value));
 $('type-filter').addEventListener('change',()=>configure(state.module,$('type-filter').value));
 $('source-filter').addEventListener('change',()=>configure(state.module,state.type,$('source-filter').value));
 const runSearch=()=>{const pending=searchPending;clearTimeout(searchTimer);searchTimer=null;searchPending=false;if(!pending&&$('question-search').value===state.query&&$('search-scope').value===state.searchScope)return;configure(state.module,state.type,state.source,$('question-search').value,state.status,state.project,$('search-scope').value);};
@@ -319,8 +329,11 @@ try{motionEnabled=localStorage.getItem(motionPreferenceKey)!=='off';}catch{}
 function applyMotion(){const on=motionEnabled&&!reducedMotion?.matches;document.documentElement?.classList.toggle('motion-paused',!on);$('motion-toggle').setAttribute('aria-pressed',on);$('motion-toggle').disabled=Boolean(reducedMotion?.matches);$('motion-label').textContent=reducedMotion?.matches?'静态背景 · 系统设置':on?'动态背景已开启':'动态背景已暂停';}
 $('motion-toggle').addEventListener('click',()=>{motionEnabled=!motionEnabled;try{localStorage.setItem(motionPreferenceKey,motionEnabled?'on':'off');}catch{}applyMotion();});reducedMotion?.addEventListener?.('change',applyMotion);document.addEventListener?.('visibilitychange',()=>document.documentElement?.classList.toggle('page-idle',document.hidden));applyMotion();
 window.PracticeApp={bank,info,C,get state(){return state;},get storageOK(){return storageOK;},persist,flush,render,notify,confirm,setMode,activeAssessment,filtered,
- openScope(status,date){if(activeAssessment()){notify('请先完成或退出当前自测或项目面试。');return;}state.mode='practice';searchPending=false;if(date)state.reviewDate=date;configure('全部','全部','全部','',status,'全部');setListExpanded(false);revealActive();},
- openQuestion(id){if(!byId.has(id)||activeAssessment())return;state.mode='practice';searchPending=false;configure('全部','全部','全部','','all','全部');state.current=id;render();revealActive();},
+ openScope(status,date){if(activeAssessment()){notify('请先完成或退出当前自测或项目面试。');return;}state.mode='practice';searchPending=false;if(date)state.reviewDate=date;configure('全部','全部','全部','',status,'全部','all','all','');setListExpanded(false);revealActive();},
+ openQuestion(id){if(!byId.has(id)||activeAssessment())return;state.mode='practice';searchPending=false;configure('全部','全部','全部','','all','全部','all','all','');state.current=id;render();revealActive();},
+ openTopic(topic){if(activeAssessment()){notify('请先结束当前自测或项目面试。');return;}state.mode='practice';searchPending=false;configure('全部','全部','全部','','all','全部','all',topic,'');setFiltersExpanded(true);revealActive();},
+ openRoute(key,replace=false){if(activeAssessment())throw Error('请先结束当前自测或项目面试。');const part=P.stage(key);if(!part)throw Error('无效的训练阶段。');flush();if(replace||!state.routeSessions[key]){const ids=P.pick(bank,key,state,C);if(!ids.length)throw Error('这个阶段暂时没有可用题目。');const now=Date.now(),old=state.routeSessions[key];state.routeSessions[key]={ids,startedAt:now,updatedAt:Math.max(now,(old?.updatedAt||0)+1)};}const session=state.routeSessions[key];state.mode='practice';state.current=session.ids.find(id=>C.isDue(state,id))||session.ids.find(id=>!C.isCompleted(state,id))||session.ids.find(id=>C.needsReview(state,id))||session.ids[0];searchPending=false;configure('全部','全部','全部','','all','全部','all','all',key);setListExpanded(false);revealActive();},
+ leaveRoute(){if(activeAssessment())throw Error('请先结束当前自测或项目面试。');configure(state.module,state.type,state.source,state.query,state.status,state.project,state.searchScope,state.topic,'');},
  mergeImport(incoming){if(activeAssessment())throw Error('请先结束当前自测或项目面试，再导入学习记录。');state=C.merge(state,incoming,bank);render();},
  updatePlan(target,project){if(![5,10,15,20].includes(target)||!['全部','IM','云盘','通用'].includes(project))throw Error('无效的每日计划设置。');if(activeAssessment())throw Error('请先结束当前自测或项目面试，再调整计划。');state.settings={dailyTarget:target,dailyProject:project};state.dailyPlan=C.makePlan(bank,state);persist();}
 };
@@ -353,8 +366,8 @@ if(!storageOK)notify('自动保存未成功，请使用“学习备份”导出�
 const context=document.modelContext;
 if(context?.registerTool){
   const lifecycle=new AbortController();const register=tool=>{try{Promise.resolve(context.registerTool(tool,{signal:lifecycle.signal})).catch(()=>{});}catch{}};
-  register({name:'read_practice_progress',description:'读取当前标签页的练习完成情况和最近自测结果。',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true},execute:()=>({total:bank.length,completed:completedIds().length,needsReview:bank.filter(q=>needsReview(q.id)).map(q=>q.id),module:state.module,type:state.type,source:state.source,project:state.project,searchScope:state.searchScope,query:state.query,status:state.status,lastTest:state.lastTest,due:bank.filter(q=>C.isDue(state,q.id)).length,favorites:Object.values(state.cards).filter(c=>c.favorite).length,dailyPlan:state.dailyPlan})});
-  register({name:'filter_practice_questions',description:'按项目、模块、来源、关键词和练习状态筛选题目；自测进行中不能改变范围。',inputSchema:{type:'object',properties:{module:{type:'string',enum:['全部',...Object.keys(info)]},type:{type:'string',enum:['全部','概念题','场景题','代码题']},source:{type:'string',enum:['全部','基础','每日',...dates]},project:{type:'string',enum:['全部','IM','云盘','通用']},query:{type:'string',maxLength:120},searchScope:{type:'string',enum:['all','question','reference','personal']},status:{type:'string',enum:['all','pending','answered','review','due','favorite','notes','plan','calendar']}},required:['module','type'],additionalProperties:false},annotations:{readOnlyHint:false},execute:input=>{if(!input||typeof input.module!=='string'||typeof input.type!=='string')throw new Error('模块和题型为必填项。');return configure(input.module,input.type,input.source||state.source,input.query??state.query,input.status||state.status,input.project||state.project,input.searchScope||state.searchScope);}});
+  register({name:'read_practice_progress',description:'读取当前标签页的练习完成情况和最近自测结果。',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true},execute:()=>({total:bank.length,completed:completedIds().length,needsReview:bank.filter(q=>needsReview(q.id)).map(q=>q.id),module:state.module,type:state.type,source:state.source,project:state.project,searchScope:state.searchScope,topic:state.topic,routeActive:state.routeActive,query:state.query,status:state.status,lastTest:state.lastTest,due:bank.filter(q=>C.isDue(state,q.id)).length,favorites:Object.values(state.cards).filter(c=>c.favorite).length,dailyPlan:state.dailyPlan})});
+  register({name:'filter_practice_questions',description:'按项目、模块、来源、关键词和练习状态筛选题目；自测进行中不能改变范围。',inputSchema:{type:'object',properties:{module:{type:'string',enum:['全部',...Object.keys(info)]},type:{type:'string',enum:['全部','概念题','场景题','代码题']},source:{type:'string',enum:['全部','基础','每日',...dates]},project:{type:'string',enum:['全部','IM','云盘','通用']},query:{type:'string',maxLength:120},topic:{type:'string',enum:['all',...P.TOPICS.map(t=>t.id)]},searchScope:{type:'string',enum:['all','question','reference','personal']},status:{type:'string',enum:['all','pending','answered','review','due','favorite','notes','plan','calendar']}},required:['module','type'],additionalProperties:false},annotations:{readOnlyHint:false},execute:input=>{if(!input||typeof input.module!=='string'||typeof input.type!=='string')throw new Error('模块和题型为必填项。');return configure(input.module,input.type,input.source||state.source,input.query??state.query,input.status||state.status,input.project||state.project,input.searchScope||state.searchScope,input.topic||state.topic);}});
   register({name:'save_practice_answer',description:'保存指定题目的文字作答到本次练习，并更新进度；不会自动判分。',inputSchema:{type:'object',properties:{questionId:{type:'string'},answer:{type:'string',minLength:1,maxLength:10000}},required:['questionId','answer'],additionalProperties:false},annotations:{readOnlyHint:false,untrustedContentHint:true},execute:input=>{if(!input)throw new Error('缺少作答。');return saveAnswer(input.questionId,input.answer);}});
   window.addEventListener('pagehide',()=>lifecycle.abort(),{once:true});
 }
