@@ -7,6 +7,7 @@ for(const m of html.matchAll(/(?:src|href)="([^"]+)"/g)){
 }
 const scripts=[...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1].split('?')[0]);
 assert.ok(scripts.indexOf('learning-paths.js')<scripts.indexOf('learning-core.js'));assert.ok(scripts.indexOf('learning-paths-ui.js')>scripts.indexOf('app.js'));
+assert.ok(scripts.indexOf('learning-portability.js')<scripts.indexOf('learning-portability-ui.js'));assert.ok(scripts.indexOf('learning-portability-ui.js')>scripts.indexOf('app.js'));
 assert.ok(scripts.indexOf('learning-core.js')<scripts.indexOf('app.js'));assert.ok(scripts.indexOf('learning-ui.js')>scripts.indexOf('app.js'));
 const context=vm.createContext({window:{}});for(const name of scripts.filter(n=>/questions/.test(n)))vm.runInContext(fs.readFileSync(path.join(root,name),'utf8'),context,{filename:name});
 const bank=context.window.QUESTION_BANK;assert.equal(bank.length,new Set(bank.map(q=>q.id)).size);assert.ok(bank.length>=1279);assert.ok(bank.filter(q=>q.project==='云盘').length>=24);

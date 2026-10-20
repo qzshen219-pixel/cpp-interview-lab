@@ -7,7 +7,7 @@ const scripts=[...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>({name:m[1
 const NOW=Date.parse('2026-10-19T12:00:00+08:00');
 function boot(options={}){
  let now=options.now||NOW;const errors=[],intervals=[],downloads=[],blobs=[];
- const dom=new JSDOM(html,{runScripts:'outside-only',url:'https://qzshen219-pixel.github.io/cpp-interview-lab/'}),w=dom.window;
+ const dom=new JSDOM(html,{runScripts:'outside-only',url:options.url||'https://qzshen219-pixel.github.io/cpp-interview-lab/'}),w=dom.window;
  w.Date.now=()=>now;w.matchMedia=()=>({matches:options.mobile===true,addEventListener(){}});w.HTMLElement.prototype.scrollIntoView=function(){};
  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
  w.setInterval=(fn,ms)=>{intervals.push({fn,ms});return intervals.length;};
@@ -22,6 +22,65 @@ function boot(options={}){
  const value=(s,v,event='change')=>{const node=$(s);assert.ok(node,'Missing '+s);if(node.type==='checkbox')node.checked=v;else node.value=v;node.dispatchEvent(new w.Event(event,{bubbles:true}));assert.deepEqual(errors,[]);};
  return {dom,w,app:w.PracticeApp,$,click,value,tools,errors,downloads,blobs,state:()=>w.PracticeApp.state,stored:()=>w.localStorage.getItem('cpp-interview-learning-v2'),advance:ms=>{now+=ms;intervals.filter(i=>i.ms===1000).forEach(i=>i.fn());assert.deepEqual(errors,[]);},close:()=>w.close()};
 }
+function blobText(b,blob){return new Promise((resolve,reject)=>{const reader=new b.w.FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsText(blob);});}
+test('a public deep link opens its exact question and navigation updates the linked address',t=>{
+ const b=boot({url:'https://qzshen219-pixel.github.io/cpp-interview-lab/#q=q13'});t.after(b.close);
+ assert.equal(b.state().current,'q13');assert.match(b.$('#question h2').textContent,/B\+/);assert.equal(b.$('.answer-details').open,false);assert.equal(b.state().mode,'practice');
+ b.click('[data-nav="1"]');assert.equal(b.w.location.hash,'#q=q14');assert.equal(JSON.parse(b.stored()).current,'q14');
+ b.click('#exam-tab');assert.equal(b.w.location.hash,'');
+});
+test('deep links escape a route filter, keep existing drafts and collapse the mobile list',t=>{
+ const a=boot();t.after(a.close);a.app.openRoute('backend:stl');const id=a.state().current;a.value('#draft','仍要保留的内容','input');a.app.flush();
+ const b=boot({local:a.stored(),mobile:true,url:'https://qzshen219-pixel.github.io/cpp-interview-lab/#q=q43'});t.after(b.close);
+ assert.equal(b.state().current,'q43');assert.equal(b.state().routeActive,'');assert.equal(b.state().entries[id].draft,'仍要保留的内容');assert.equal(b.$('#mobile-list-toggle').getAttribute('aria-expanded'),'false');
+});
+test('invalid links retain the saved position and ordinary skip anchors stay functional',t=>{
+ const a=boot();t.after(a.close);a.app.openQuestion('q29');
+ const b=boot({local:a.stored(),url:'https://qzshen219-pixel.github.io/cpp-interview-lab/#q=missing'});t.after(b.close);assert.equal(b.state().current,'q29');assert.equal(b.w.location.hash,'');assert.match(b.$('#toast').textContent,/题目链接无效/);
+ const c=boot({local:a.stored(),url:'https://qzshen219-pixel.github.io/cpp-interview-lab/#question'});t.after(c.close);assert.equal(c.state().current,'q29');assert.equal(c.w.location.hash,'#question');
+});
+test('incoming links preserve a running timed exam and open only when the user is ready',t=>{
+ const a=boot();t.after(a.close);a.click('#exam-tab');a.value('#exam-count','5');a.value('#exam-minutes','5');a.click('#start-exam');const exam=a.state().exam;
+ const b=boot({local:a.stored(),url:'https://qzshen219-pixel.github.io/cpp-interview-lab/#q=q43'});t.after(b.close);
+ assert.equal(b.state().mode,'exam');assert.equal(b.state().exam.id,exam.id);assert.equal(b.state().exam.deadlineAt,exam.deadlineAt);assert.equal(b.$('.answer-details'),null);assert.equal(b.$('#incoming-question-banner').hidden,false);assert.equal(b.$('#incoming-question-open').disabled,true);assert.equal(b.$('#study-export-open').disabled,true);
+ b.advance(300001);assert.equal(b.state().exam.submitted,true);assert.equal(b.$('#incoming-question-open').disabled,false);assert.equal(b.state().mode,'exam');
+ b.click('#incoming-question-open');assert.equal(b.state().current,'q43');assert.equal(b.state().mode,'practice');assert.equal(b.$('#incoming-question-banner').hidden,true);assert.equal(b.w.location.hash,'#q=q43');
+});
+test('a link received in an open tab saves the current draft before navigating',t=>{
+ const b=boot();t.after(b.close);b.value('#draft','跳转前的最新输入','input');
+ b.w.history.replaceState(null,'','#q=q29');b.w.dispatchEvent(new b.w.HashChangeEvent('hashchange'));
+ assert.equal(b.state().current,'q29');assert.equal(JSON.parse(b.stored()).entries.q01.draft,'跳转前的最新输入');assert.equal(b.$('.answer-details').open,false);
+});
+test('incoming links do not interrupt a project interview and can be dismissed',t=>{
+ const a=boot();t.after(a.close);a.click('#interview-tab');a.value('#interview-minutes','0');a.click('#start-interview');a.value('#interview-draft','保留面试要点','input');a.app.flush();
+ const b=boot({local:a.stored(),url:'https://qzshen219-pixel.github.io/cpp-interview-lab/#q=q01'});t.after(b.close);
+ assert.equal(b.state().mode,'interview');assert.equal(b.state().interview.answers[0],'保留面试要点');assert.equal(b.$('#incoming-question-open').disabled,true);b.click('#incoming-question-dismiss');assert.equal(b.$('#incoming-question-banner').hidden,true);assert.equal(b.w.location.hash,'');assert.equal(b.state().mode,'interview');
+});
+test('question link copying contains only the public URL and clipboard failure keeps a manual fallback',async t=>{
+ const b=boot({url:'https://qzshen219-pixel.github.io/cpp-interview-lab/?note=secret'});t.after(b.close);b.value('#draft','私人草稿','input');
+ b.click('[data-question-link]');assert.equal(b.$('#question-link-dialog').open,true);assert.equal(b.$('#question-link-url').value,'https://qzshen219-pixel.github.io/cpp-interview-lab/#q=q01');assert.equal(JSON.parse(b.stored()).entries.q01.draft,'私人草稿');
+ let copied;Object.defineProperty(b.w.navigator,'clipboard',{configurable:true,value:{writeText:async text=>{copied=text;}}});b.click('#copy-question-link');await new Promise(setImmediate);assert.equal(copied,b.$('#question-link-url').value);assert.match(b.$('#question-link-status').textContent,/已复制/);
+ b.w.navigator.clipboard.writeText=async()=>{throw Error('denied');};b.click('#copy-question-link');await new Promise(setImmediate);assert.match(b.$('#question-link-status').textContent,/链接已选中/);assert.equal(b.w.document.activeElement,b.$('#question-link-url'));
+});
+test('system sharing sends only title and URL and cancellation is recoverable',async t=>{
+ const b=boot();t.after(b.close);let data;b.w.navigator.share=async value=>{data=value;};b.click('[data-question-link]');assert.equal(b.$('#share-question-link').hidden,false);b.click('#share-question-link');await new Promise(setImmediate);assert.deepEqual(Object.keys(data).sort(),['title','url']);
+ b.w.navigator.share=async()=>{throw new b.w.DOMException('canceled','AbortError');};b.click('#share-question-link');await new Promise(setImmediate);assert.match(b.$('#question-link-status').textContent,/已取消/);
+});
+test('export settles pending search, previews every match and respects selected quantity',async t=>{
+ const b=boot();t.after(b.close);b.value('#question-search','shared_ptr','input');b.click('#study-export-open');assert.equal(b.state().query,'shared_ptr');assert.match(b.$('#study-export-preview').textContent,new RegExp('共 '+b.app.filtered().length+' 题'));
+ b.value('#study-export-count','10');b.click('#study-export-download');const out=await blobText(b,b.blobs.at(-1));assert.equal((out.match(/^## \d+\./gm)||[]).length,10);assert.match(b.downloads.at(-1),/^cpp-interview-filtered-2026-10-19\.md$/);assert.match(out,/已应用关键词筛选/);assert.equal(b.$('#study-export-reference').checked,false);assert.equal(b.$('#study-export-personal').checked,false);
+});
+test('favorite and note exports are empty-safe and never include private records without opt-in',async t=>{
+ const b=boot();t.after(b.close);b.value('#draft','ONLY_PRIVATE_ANSWER','input');b.click('#save-answer');b.value('#draft','ONLY_PRIVATE_DRAFT','input');b.value('#personal-note','ONLY_PRIVATE_NOTE','input');b.click('[data-favorite]');
+ b.click('#study-export-open');b.value('#study-export-scope','favorite');assert.match(b.$('#study-export-preview').textContent,/共 1 题/);b.click('#study-export-download');const plain=await blobText(b,b.blobs.at(-1));assert.doesNotMatch(plain,/ONLY_PRIVATE|参考答案\n/);
+ b.value('#study-export-personal',true);b.value('#study-export-reference',true);b.click('#study-export-download');const full=await blobText(b,b.blobs.at(-1));assert.match(full,/ONLY_PRIVATE_ANSWER/);assert.match(full,/ONLY_PRIVATE_DRAFT/);assert.match(full,/ONLY_PRIVATE_NOTE/);assert.match(full,/### 参考答案/);assert.equal(JSON.parse(b.stored()).entries.q01.draft,'ONLY_PRIVATE_DRAFT');
+ b.click('#study-export-close');b.click('#study-export-open');assert.equal(b.$('#study-export-personal').checked,false);assert.equal(b.$('#study-export-reference').checked,false);
+ b.value('#study-export-scope','due');assert.equal(b.$('#study-export-download').disabled,true);assert.match(b.$('#study-export-preview').textContent,/暂无题目/);
+});
+test('route exports preserve stage order and exports never change plans or completion',async t=>{
+ const b=boot();t.after(b.close);b.app.openRoute('ops:proxy');const ids=Array.from(b.state().routeSessions['ops:proxy'].ids),plan=JSON.stringify(b.state().dailyPlan);b.click('#study-export-open');b.value('#study-export-count','all');b.click('#study-export-download');const out=await blobText(b,b.blobs.at(-1));
+ assert.deepEqual([...out.matchAll(/\[打开这道题\]\([^\n]*#q=([^\)]+)\)/g)].map(m=>decodeURIComponent(m[1])),ids);assert.equal(JSON.stringify(b.state().dailyPlan),plan);assert.equal(Object.values(b.state().entries).filter(e=>e.submitted).length,0);assert.match(out,/云网运维 \/ 代理、负载与服务入口/);
+});
 test('full current bank boots with all seven modules, projects and learning tools',t=>{
  const b=boot();t.after(b.close);assert.equal(b.app.bank.length,1279);assert.equal(new Set(b.app.bank.map(q=>q.id)).size,1279);assert.equal(new Set(b.app.bank.map(q=>q.module)).size,7);assert.ok(b.app.bank.filter(q=>q.project==='云盘').length>=24);
  assert.equal(b.state().dailyPlan.ids.length,10);assert.equal(b.$('#today-total').textContent,'10');assert.ok(b.stored());assert.match(b.$('#storage-status').textContent,/已自动保存/);assert.equal(b.tools.length,3);
