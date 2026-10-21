@@ -8,7 +8,7 @@ function renderHub(){
  const state=app.state,now=Date.now(),day=C.dayKey(now),plan=state.dailyPlan,activity=new Set(state.activity[day]?.ids||[]);
  const done=plan.ids.filter(id=>activity.has(id)).length,due=app.bank.filter(q=>C.isDue(state,q.id,now)).length;
  const favorite=Object.values(state.cards).filter(c=>c.favorite).length,notes=Object.values(state.cards).filter(c=>c.note.trim()).length;
- $('hub-date').textContent=day+' · 北京时间';$('today-completed').textContent=done;$('today-total').textContent=plan.ids.length;
+ $('hub-date').textContent=day+' · 北京时间';$('hub-compact-summary').textContent='已完成 '+done+' / '+plan.ids.length+' · 到期 '+due;$('today-completed').textContent=done;$('today-total').textContent=plan.ids.length;
  $('daily-progress').max=Math.max(1,plan.ids.length);$('daily-progress').value=done;
  $('daily-message').textContent=!plan.ids.length?'今天暂无新的待练题，可进入题库自由练习。':done===plan.ids.length?'今日计划已完成，下一次复习已为你安排。':'新题、到期复习与薄弱知识点，组成今天的一小步。';
  $('daily-start').textContent=done===plan.ids.length&&plan.ids.length?'回顾今日练习':'开始今日练习';$('daily-start').disabled=!plan.ids.length;

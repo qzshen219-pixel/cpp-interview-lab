@@ -23,6 +23,22 @@ function boot(options={}){
  return {dom,w,app:w.PracticeApp,$,click,value,tools,errors,downloads,blobs,state:()=>w.PracticeApp.state,stored:()=>w.localStorage.getItem('cpp-interview-learning-v2'),advance:ms=>{now+=ms;intervals.filter(i=>i.ms===1000).forEach(i=>i.fn());assert.deepEqual(errors,[]);},close:()=>w.close()};
 }
 function blobText(b,blob){return new Promise((resolve,reject)=>{const reader=new b.w.FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsText(blob);});}
+test('compact overview starts closed and preserves a visitor choice while saving and rendering',t=>{
+ const b=boot({mobile:true});t.after(b.close);assert.equal(b.$('#learning-hub').open,false);b.$('#learning-hub').open=true;
+ b.click('#quick-daily-start');assert.equal(b.state().status,'plan');b.value('#draft','保留概览展开与作答内容','input');b.click('#save-answer');assert.equal(b.$('#learning-hub').open,true);assert.match(b.$('#hub-compact-summary').textContent,/已完成 1 \/ 10/);assert.equal(b.$('#workspace').dataset.mode,'practice');
+});
+test('utility menus dismiss outside or with Escape and restore focus after a launched dialog closes',t=>{
+ const b=boot();t.after(b.close);const menu=b.$('#utility-menu'),summary=menu.querySelector('summary');menu.open=true;
+ b.click('#backup-open');assert.equal(menu.open,false);assert.equal(b.$('#backup-dialog').open,true);b.click('#backup-close');b.$('#backup-dialog').dispatchEvent(new b.w.Event('close'));assert.equal(b.w.document.activeElement,summary);
+ menu.open=true;summary.focus();b.w.document.dispatchEvent(new b.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(menu.open,false);assert.equal(b.w.document.activeElement,summary);
+ menu.open=true;b.click('#question h2');assert.equal(menu.open,false);
+ menu.open=true;b.click('#device-menu summary');assert.equal(menu.open,false);assert.equal(b.$('#device-menu').open,true);
+});
+test('an open dialog gets Escape before utility dismissal and quick daily practice cannot interrupt an assessment',t=>{
+ const b=boot();t.after(b.close);b.click('#exam-tab');b.value('#exam-count','5');b.value('#exam-minutes','5');b.click('#start-exam');const deadline=b.state().exam.deadlineAt;
+ assert.equal(b.$('#workspace').dataset.mode,'exam');assert.equal(b.$('#quick-daily-start').disabled,true);b.click('#quick-daily-start');assert.equal(b.state().mode,'exam');assert.equal(b.state().exam.deadlineAt,deadline);
+ b.click('#backup-open');b.$('#utility-menu').open=true;b.w.document.dispatchEvent(new b.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(b.$('#utility-menu').open,true);assert.equal(b.$('#backup-dialog').open,true);
+});
 test('a public deep link opens its exact question and navigation updates the linked address',t=>{
  const b=boot({url:'https://qzshen219-pixel.github.io/cpp-interview-lab/#q=q13'});t.after(b.close);
  assert.equal(b.state().current,'q13');assert.match(b.$('#question h2').textContent,/B\+/);assert.equal(b.$('.answer-details').open,false);assert.equal(b.state().mode,'practice');
