@@ -64,6 +64,10 @@ window.MODULE_INFO = {
   'MySQL': {short:'SQL',sub:'索引 · 事务 · 幂等',source:'https://dev.mysql.com/doc/refman/8.4/en/',label:'MySQL 8.4 官方手册'},
   'Redis': {short:'RDS',sub:'缓存 · 锁 · 消息',source:'https://redis.io/docs/latest/',label:'Redis 官方文档'},
   'Nginx': {short:'NGX',sub:'代理 · 均衡 · 502 排查',source:'https://nginx.org/en/docs/',label:'Nginx 官方文档'},
+  'Git': {short:'GIT',sub:'版本控制 · 协作 · 恢复',source:'https://git-scm.com/docs',label:'Git 官方文档'},
+  'Docker': {short:'DK',sub:'镜像 · 容器 · 部署',source:'https://docs.docker.com/',label:'Docker 官方文档'},
+  'Qt': {short:'QT',sub:'信号槽 · 异步网络 · 生命周期',source:'https://doc.qt.io/qt-6/',label:'Qt 官方文档（结合实际版本）'},
   '项目追问': {short:'项目',sub:'IM · 云盘 · 通用工程',source:null,label:'面试场景与设计思路'}
 };
 })();
+

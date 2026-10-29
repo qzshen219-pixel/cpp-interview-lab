@@ -19,11 +19,20 @@ const TOPICS=[
  {id:'redis-coordination',label:'分布式锁与消息协作',module:'Redis',pattern:/分布式锁|\bNX\b|\bPX\b|Lua|原子|Pub.?Sub|订阅|发布|队列|Stream|令牌|Token|路由/i},
  {id:'nginx-routing',label:'反向代理与负载均衡',module:'Nginx',pattern:/代理|负载|轮询|upstream|哈希|会话|路由|转发|location|静态|均衡/i},
  {id:'nginx-debug',label:'超时、502 与连接排障',module:'Nginx',pattern:/超时|502|504|timeout|断开|断连|排查|排障|日志|WebSocket|连接数|限流|缓冲/i},
+ {id:'git-workflow',label:'暂存、分支与历史整合',module:'Git',pattern:/暂存|工作区|提交快照|分支|合并|merge|rebase|cherry|冲突|三方/i},
+ {id:'git-collaboration',label:'协作、发布与凭证边界',module:'Git',pattern:/fetch|pull|推送|push|协作|标签|发布|tag|worktree|ignore|凭证|密钥|泄漏/i},
+ {id:'git-recovery',label:'版本回退与回归定位',module:'Git',pattern:/reset|restore|revert|reflog|stash|bisect|回滚|回退|恢复|找回|二分/i},
+ {id:'docker-build',label:'镜像、构建与版本',module:'Docker',pattern:/镜像|Dockerfile|构建|缓存|多阶段|digest|版本|回滚|ENTRYPOINT/i},
+ {id:'docker-storage',label:'卷、网络与数据持久化',module:'Docker',pattern:/卷|挂载|存储|持久|网络|端口|localhost|服务名|备份/i},
+ {id:'docker-ops',label:'容器运行、资源与排障',module:'Docker',pattern:/容器|Compose|健康|依赖|信号|PID|资源|OOM|日志|inspect|权限|root|秘密/i},
+ {id:'qt-lifetime',label:'对象寿命与线程归属',module:'Qt',pattern:/QObject|QPointer|生命周期|寿命|销毁|parent|父子|线程|QThread|worker|单例|LoginInstance/i},
+ {id:'qt-events',label:'信号槽、事件与界面模型',module:'Qt',pattern:/信号|槽|connect|Connection|事件|QTimer|定时器|GUI|界面|模型|Model|View|QAbstractItem/i},
+ {id:'qt-network',label:'异步网络、上传与数据解析',module:'Qt',pattern:/网络|QNetwork|reply|请求|上传|下载|QHttpMultiPart|进度|取消|JSON|QString|QByteArray|UTF/i},
  {id:'project-delivery',label:'消息可靠性与一致性',module:'项目追问',pattern:/消息|幂等|重复|顺序|一致|事务|补偿|撤回|重试|离线|outbox|Pub.?Sub|发布|订阅|在线|路由|Token|心跳/i},
  {id:'project-files',label:'云盘、上传与文件安全',module:'项目追问',pattern:/云盘|文件|上传|下载|分片|multipart|S3|对象存储|路径|权限|签名|哈希|校验/i},
  {id:'project-debug',label:'项目排障与工程交付',module:'项目追问',pattern:/排查|排障|监控|告警|关闭|退出|上线|部署|回滚|日志|CPU|资源|故障|性能|压测|限流|熔断|恢复|测试/i}
 ];
-const fallbackIds={'C++':'cpp-fundamentals',Linux:'linux-fundamentals','TCP/HTTP':'net-fundamentals',MySQL:'mysql-fundamentals',Redis:'redis-fundamentals',Nginx:'nginx-fundamentals','项目追问':'project-fundamentals'};
+const fallbackIds={'C++':'cpp-fundamentals',Linux:'linux-fundamentals','TCP/HTTP':'net-fundamentals',MySQL:'mysql-fundamentals',Redis:'redis-fundamentals',Nginx:'nginx-fundamentals',Git:'git-fundamentals',Docker:'docker-fundamentals',Qt:'qt-fundamentals','项目追问':'project-fundamentals'};
 for(const [module,id] of Object.entries(fallbackIds))TOPICS.push({id,label:module==='项目追问'?'项目方案与边界':module+' 综合基础',module});
 const ROUTES=[
  {id:'backend',label:'C++ 后端',intro:'从语言与并发，到网络服务、数据库和项目表达。',stages:[
@@ -32,6 +41,7 @@ const ROUTES=[
   {id:'concurrency',label:'并发与事件驱动',goal:'把线程同步、异步回调和 IO 事件循环连起来。',topics:['cpp-thread','linux-io','linux-process','linux-fundamentals']},
   {id:'network',label:'网络服务与连接管理',goal:'解释 TCP、HTTP、WebSocket 和代理超时。',topics:['net-tcp','net-http','net-fundamentals','nginx-routing','nginx-debug','nginx-fundamentals']},
   {id:'storage',label:'数据库与缓存',goal:'用项目例子说明索引、事务、缓存和高可用。',topics:['mysql-index','mysql-transaction','mysql-reliability','mysql-fundamentals','redis-cache','redis-ha','redis-coordination','redis-fundamentals']},
+  {id:'delivery',label:'Git、Docker 与 Qt 工程实践',goal:'连接版本协作、容器发布与异步客户端，解释生命周期和故障边界。',topics:['git-workflow','git-collaboration','git-recovery','git-fundamentals','docker-build','docker-storage','docker-ops','docker-fundamentals','qt-lifetime','qt-events','qt-network','qt-fundamentals']},
   {id:'project',label:'项目可靠性与追问',goal:'用故障场景检验幂等、一致性、恢复与交付。',topics:['project-delivery','project-files','project-debug','project-fundamentals','linux-debug']}
  ]},
  {id:'ops',label:'云网运维',intro:'围绕现有题库，练习 Linux、网络、代理、数据服务和故障处理。',stages:[
@@ -39,6 +49,7 @@ const ROUTES=[
   {id:'network',label:'网络链路与协议排障',goal:'区分传输、协议、连接状态和应用层超时。',topics:['net-tcp','net-http','net-fundamentals']},
   {id:'proxy',label:'代理、负载与服务入口',goal:'结合 Nginx 处理 502、断连、转发和超时场景。',topics:['nginx-debug','nginx-routing','nginx-fundamentals']},
   {id:'data',label:'数据服务可靠性',goal:'核对事务锁、主从切换、恢复与缓存风险。',topics:['mysql-index','mysql-transaction','mysql-reliability','mysql-fundamentals','redis-cache','redis-ha','redis-coordination','redis-fundamentals']},
+  {id:'delivery',label:'Git 与 Docker 部署排障',goal:'追溯发布版本，核对容器网络、持久卷、资源限制和恢复条件。',topics:['git-workflow','git-collaboration','git-recovery','git-fundamentals','docker-build','docker-storage','docker-ops','docker-fundamentals']},
   {id:'incident',label:'故障恢复与项目复盘',goal:'按现象、定位、恢复、验证的顺序讲清项目问题。',topics:['project-debug','project-delivery','project-files','project-fundamentals']}
  ]}
 ];
@@ -84,3 +95,4 @@ function related(bank,id,limit=4){
 }
 const api={TOPICS,ROUTES,classify,index,stage,routePools,cleanSessions,pick,related};if(typeof module==='object'&&module.exports)module.exports=api;else root.LearningPaths=api;
 })(typeof window==='object'?window:globalThis);
+

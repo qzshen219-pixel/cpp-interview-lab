@@ -3,7 +3,7 @@ const P=require('../learning-paths.js'),C=require('../learning-core.js'),root=pa
 for(const m of html.matchAll(/<script[^>]+src="([^"]+)"/g)){const file=m[1].split('?')[0];if(file.includes('questions'))vm.runInContext(fs.readFileSync(path.join(root,file),'utf8'),ctx);}
 const bank=ctx.window.QUESTION_BANK,now=Date.parse('2026-10-20T11:00:00+08:00');
 test('the full bank has known module-compatible tags without changing question data',()=>{
- const before=JSON.stringify(bank),tags=P.index(bank);assert.equal(P.TOPICS.length,28);assert.equal(tags.size,1279);
+ const before=JSON.stringify(bank),tags=P.index(bank);assert.equal(P.TOPICS.length,40);assert.equal(tags.size,1879);
  for(const q of bank){assert.ok(tags.get(q.id).length);for(const id of tags.get(q.id))assert.equal(P.TOPICS.find(t=>t.id===id).module,q.module);}
  assert.equal(JSON.stringify(bank),before);assert.equal(P.index(bank),tags);
 });
@@ -15,7 +15,7 @@ test('classification reads the question instead of incidental reference-answer k
  assert.deepEqual(P.classify({module:'MySQL',title:'一个未归入细分类的问题'}),['mysql-fundamentals']);
 });
 test('both role routes offer usable stages and never duplicate a question between their stages',()=>{
- const pools=P.routePools(bank);assert.equal(P.ROUTES[0].stages.length,6);assert.equal(P.ROUTES[1].stages.length,5);
+ const pools=P.routePools(bank);assert.equal(P.ROUTES[0].stages.length,7);assert.equal(P.ROUTES[1].stages.length,6);
  for(const route of P.ROUTES){const used=new Set();for(const stage of route.stages){const key=route.id+':'+stage.id,questions=pools.get(key);assert.ok(questions.length>=10,key);for(const q of questions){assert.ok(!used.has(q.id));used.add(q.id);}}}
 });
 test('stage sampling prioritizes due work and stores a stable unique group of ten',()=>{
@@ -50,3 +50,4 @@ test('same-browser record sync preserves an empty page view while explicit backu
  const synced=C.sync(a,b,bank,now);assert.equal(synced.focusMode,true);assert.equal(synced.topic,'cpp-stl');assert.equal(synced.query,'vector');assert.equal(synced.mode,'exam');assert.equal(synced.entries[bank[0].id].submitted,'来自另一页面的作答');
  b.focusMode=true;b.topic='cpp-memory';const imported=C.merge(C.fresh(bank),b,bank,now);assert.equal(imported.focusMode,true);assert.equal(imported.topic,'cpp-memory');
 });
+
