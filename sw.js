@@ -1,5 +1,5 @@
 'use strict';
-const VERSION='20261029.1';
+const VERSION='20261030.1';
 const BASE=self.registration.scope;
 const PREFIX='cpp-interview-offline:'+new URL(BASE).pathname+':';
 const CACHE=PREFIX+VERSION;
