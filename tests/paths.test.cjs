@@ -3,7 +3,7 @@ const P=require('../learning-paths.js'),C=require('../learning-core.js'),root=pa
 for(const m of html.matchAll(/<script[^>]+src="([^"]+)"/g)){const file=m[1].split('?')[0];if(file.includes('questions'))vm.runInContext(fs.readFileSync(path.join(root,file),'utf8'),ctx);}
 const bank=ctx.window.QUESTION_BANK,now=Date.parse('2026-10-20T11:00:00+08:00');
 test('the full bank has known module-compatible tags without changing question data',()=>{
- const before=JSON.stringify(bank),tags=P.index(bank);assert.equal(P.TOPICS.length,40);assert.equal(tags.size,1879);
+ const before=JSON.stringify(bank),tags=P.index(bank);assert.equal(P.TOPICS.length,40);assert.equal(tags.size,1999);
  for(const q of bank){assert.ok(tags.get(q.id).length);for(const id of tags.get(q.id))assert.equal(P.TOPICS.find(t=>t.id===id).module,q.module);}
  assert.equal(JSON.stringify(bank),before);assert.equal(P.index(bank),tags);
 });

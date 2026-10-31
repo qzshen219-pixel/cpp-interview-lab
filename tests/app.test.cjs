@@ -23,6 +23,18 @@ function boot(options={}){
  return {dom,w,app:w.PracticeApp,$,click,value,tools,errors,downloads,blobs,state:()=>w.PracticeApp.state,stored:()=>w.localStorage.getItem('cpp-interview-learning-v2'),advance:ms=>{now+=ms;intervals.filter(i=>i.ms===1000).forEach(i=>i.fn());assert.deepEqual(errors,[]);},close:()=>w.close()};
 }
 function blobText(b,blob){return new Promise((resolve,reject)=>{const reader=new b.w.FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsText(blob);});}
+test('October 30 and 31 contain complete rounds and retain new Qt answers and exam scope',t=>{
+ const now=Date.parse('2026-10-31T12:00:00+08:00'),b=boot({now,mobile:true});t.after(b.close);
+ for(const date of ['2026-10-30','2026-10-31']){
+  b.value('#source-filter',date);const list=Array.from(b.app.filtered());assert.equal(list.length,60);assert.equal(new Set(list.map(q=>q.sourceRound)).size,12);
+  assert.equal(list.filter(q=>q.module==='Linux').length,10);for(const module of ['Git','Docker','Qt'])assert.equal(list.filter(q=>q.module===module).length,5);
+  assert.equal(list.filter(q=>q.type==='代码题').length,12);
+ }
+ b.click('[data-module="Qt"]');b.value('#type-filter','代码题');assert.equal(b.app.filtered().length,1);assert.ok(b.$('#question .code-block'));
+ const id=b.state().current;b.value('#draft','通过 QSignalBlocker 区分界面同步与用户操作，并保持请求权限检查。','input');b.click('#save-answer');b.click('[data-rating="basic"]');
+ const c=boot({now,local:b.stored(),mobile:true});t.after(c.close);assert.equal(c.state().source,'2026-10-31');assert.equal(c.state().current,id);assert.equal(c.state().entries[id].rating,'basic');
+ c.click('#clear-all-filter');c.value('#source-filter','2026-10-31');c.click('#exam-tab');c.value('#exam-count','5');c.click('#start-exam');assert.equal(c.state().exam.ids.length,5);assert.ok(c.state().exam.ids.every(id=>id.startsWith('daily-2026-10-31-')));
+});
 test('October 20 through 29 each contain twelve complete rounds including Git Docker Linux and Qt',t=>{
  const b=boot({now:Date.parse('2026-10-29T12:00:00+08:00')});t.after(b.close);
  for(let d=20;d<=29;d++){
@@ -32,7 +44,7 @@ test('October 20 through 29 each contain twelve complete rounds including Git Do
   assert.equal(list.filter(q=>q.module==='Linux').length,10);assert.equal(list.filter(q=>q.type==='代码题').length,12);
  }
  b.click('#clear-all-filter');for(const m of ['Git','Docker','Qt']){
-  b.click(`[data-module="${m}"]`);assert.equal(b.app.filtered().length,50);assert.ok(b.$('#question .source'));b.click('#clear-all-filter');
+  b.click(`[data-module="${m}"]`);assert.equal(b.app.filtered().length,60);assert.ok(b.$('#question .source'));b.click('#clear-all-filter');
  }
  assert.equal(b.tools.find(t=>t.name==='filter_practice_questions').inputSchema.properties.module.enum.includes('Qt'),true);
 });
@@ -125,7 +137,7 @@ test('route exports preserve stage order and exports never change plans or compl
  assert.deepEqual([...out.matchAll(/\[打开这道题\]\([^\n]*#q=([^\)]+)\)/g)].map(m=>decodeURIComponent(m[1])),ids);assert.equal(JSON.stringify(b.state().dailyPlan),plan);assert.equal(Object.values(b.state().entries).filter(e=>e.submitted).length,0);assert.match(out,/云网运维 \/ 代理、负载与服务入口/);
 });
 test('full current bank boots with all seven modules, projects and learning tools',t=>{
- const b=boot();t.after(b.close);assert.equal(b.app.bank.length,1879);assert.equal(new Set(b.app.bank.map(q=>q.id)).size,1879);assert.equal(new Set(b.app.bank.map(q=>q.module)).size,10);assert.ok(b.app.bank.filter(q=>q.project==='云盘').length>=24);
+ const b=boot();t.after(b.close);assert.equal(b.app.bank.length,1999);assert.equal(new Set(b.app.bank.map(q=>q.id)).size,1999);assert.equal(new Set(b.app.bank.map(q=>q.module)).size,10);assert.ok(b.app.bank.filter(q=>q.project==='云盘').length>=24);
  assert.equal(b.state().dailyPlan.ids.length,10);assert.equal(b.$('#today-total').textContent,'10');assert.ok(b.stored());assert.match(b.$('#storage-status').textContent,/已自动保存/);assert.equal(b.tools.length,3);
 });
 test('answer, self-evaluation, favorite, note and current position survive a new tab without session data',t=>{
@@ -241,7 +253,7 @@ test('reference search shows matching snippets, Unicode highlights and preserved
  b.value('#search-scope','reference');b.value('#question-search',phrase);
  assert.ok(b.app.filtered().some(item=>item.id===q.id));assert.ok(b.$('.search-hit mark'));assert.match(b.$('.search-hit').textContent,/参考答案/);
  assert.equal(b.$('#question-search').value,phrase);const c=boot({local:b.stored()});t.after(c.close);assert.equal(c.state().searchScope,'reference');assert.equal(c.state().query,phrase);
- b.click('#clear-all-filter');assert.equal(b.state().searchScope,'all');assert.equal(b.app.filtered().length,1879);
+ b.click('#clear-all-filter');assert.equal(b.state().searchScope,'all');assert.equal(b.app.filtered().length,1999);
 });
 test('personal full text search finds notes safely and uses the same scope through WebMCP',t=>{
  const b=boot();t.after(b.close);const id=b.state().current,note='个人唯一关键字 </textarea><img src=x onerror=alert(1)> ＳＱＬ';b.value('#personal-note',note,'input');
@@ -293,7 +305,7 @@ test('a route stage keeps its selected questions and progress when reopening',t=
  assert.equal(b.state().routeActive,'backend:stl');assert.equal(b.app.filtered().length,10);assert.equal(b.$('#route-session-banner').hidden,false);const ids=Array.from(b.state().routeSessions['backend:stl'].ids),first=b.state().current;
  b.value('#draft','阶段中的第一份作答','input');b.click('#save-answer');assert.match(b.$('#route-session-progress').textContent,/已作答 1 \/ 10/);assert.equal(JSON.stringify(b.state().dailyPlan),daily);
  const c=boot({local:b.stored()});t.after(c.close);assert.deepEqual(Array.from(c.state().routeSessions['backend:stl'].ids),ids);c.click('#paths-open');c.click('[data-start-stage="backend:stl"]');assert.notEqual(c.state().current,first);assert.deepEqual(Array.from(c.state().routeSessions['backend:stl'].ids),ids);
- c.click('#route-leave');assert.equal(c.state().routeActive,'');assert.equal(c.app.filtered().length,1879);assert.ok(c.state().routeSessions['backend:stl']);
+ c.click('#route-leave');assert.equal(c.state().routeActive,'');assert.equal(c.app.filtered().length,1999);assert.ok(c.state().routeSessions['backend:stl']);
 });
 test('the operations route exposes six stages and daily/favorite scopes exit a route cleanly',t=>{
  const b=boot();t.after(b.close);b.click('#paths-open');b.click('[data-path-choice="ops"]');assert.equal(b.$('#path-stages').children.length,6);b.click('[data-start-stage="ops:proxy"]');assert.equal(b.state().routeActive,'ops:proxy');assert.ok(b.app.filtered().every(q=>q.module==='Nginx'));
