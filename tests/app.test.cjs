@@ -23,6 +23,50 @@ function boot(options={}){
  return {dom,w,app:w.PracticeApp,$,click,value,tools,errors,downloads,blobs,state:()=>w.PracticeApp.state,stored:()=>w.localStorage.getItem('cpp-interview-learning-v2'),advance:ms=>{now+=ms;intervals.filter(i=>i.ms===1000).forEach(i=>i.fn());assert.deepEqual(errors,[]);},close:()=>w.close()};
 }
 function blobText(b,blob){return new Promise((resolve,reject)=>{const reader=new b.w.FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsText(blob);});}
+test('range navigation validates positions, preserves drafts and notes and survives reopening',t=>{
+ const b=boot({mobile:true});t.after(b.close);b.value('#source-filter','2026-10-31');
+ const ids=Array.from(b.app.filtered(),q=>q.id),first=b.state().current;
+ b.value('#draft','跳题前尚未提交的最新草稿','input');b.value('#personal-note','保留本题笔记','input');
+ b.click('[data-practice-jump]');assert.equal(b.$('#practice-navigation-dialog').open,true);
+ for(const invalid of ['', '0', '61', '1.5']){b.value('#practice-position',invalid,'input');assert.equal(b.$('#practice-jump-go').disabled,true);b.$('#practice-jump-form').dispatchEvent(new b.w.Event('submit',{bubbles:true,cancelable:true}));assert.equal(b.state().current,first);}
+ b.value('#practice-position','45','input');assert.ok(b.$('#practice-jump-preview').textContent.includes(b.app.bank.find(q=>q.id===ids[44]).title));b.click('#practice-jump-go');
+ assert.equal(b.state().current,ids[44]);assert.equal(b.state().source,'2026-10-31');assert.equal(b.$('#practice-navigation-dialog').open,false);assert.equal(b.$('#mobile-list-toggle').getAttribute('aria-expanded'),'false');
+ b.$('#practice-navigation-dialog').dispatchEvent(new b.w.Event('close'));assert.equal(b.w.document.activeElement,b.$('#question'));
+ const saved=JSON.parse(b.stored());assert.equal(saved.entries[first].draft,'跳题前尚未提交的最新草稿');assert.equal(saved.cards[first].note,'保留本题笔记');assert.equal(b.app.C.isCompleted(b.state(),first),false);
+ const c=boot({local:b.stored()});t.after(c.close);assert.equal(c.state().current,ids[44]);assert.equal(c.state().source,'2026-10-31');
+ assert.equal(c.app.navigatePractice('q01'),false);assert.equal(c.state().current,ids[44]);
+});
+test('random practice respects a route and current search, excludes the current question and never records completion',t=>{
+ const b=boot();t.after(b.close);b.app.openRoute('backend:stl');const route=b.state().routeActive,ids=Array.from(b.app.filtered(),q=>q.id),plan=JSON.stringify(b.state().dailyPlan);
+ let current=b.state().current;
+ for(let i=0;i<4;i++){b.click('[data-practice-jump]');b.click('#practice-random');assert.ok(ids.includes(b.state().current));assert.notEqual(b.state().current,current);current=b.state().current;assert.equal(b.state().routeActive,route);}
+ assert.equal(JSON.stringify(b.state().dailyPlan),plan);assert.equal(b.$('#completed').textContent,'0');assert.equal(Object.keys(b.state().outcomes).length,0);
+ b.click('#clear-all-filter');b.value('#question-search','epoll','input');b.click('[data-practice-jump]');assert.equal(b.state().query,'epoll');const matches=Array.from(b.app.filtered(),q=>q.id);b.click('#practice-random');assert.ok(matches.includes(b.state().current));
+ b.click('#clear-all-filter');b.click('[data-favorite]');b.app.openScope('favorite');b.click('[data-practice-jump]');assert.equal(b.$('#practice-random').disabled,true);
+ b.click('#practice-navigation-close');b.value('#question-search','zzzz-no-such-question','change');assert.equal(b.$('[data-practice-jump]'),null);assert.equal(b.app.navigatePractice('q01'),false);
+});
+test('practice shortcuts save only the answer field and ignore typing, composition, dialogs and active assessments',t=>{
+ const b=boot();t.after(b.close);const key=(target,key,extra={})=>target.dispatchEvent(new b.w.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,...extra}));
+ b.value('#draft','快捷键保存的作答','input');key(b.$('#draft'),'Enter',{ctrlKey:true});assert.equal(b.state().entries.q01.submitted,'快捷键保存的作答');
+ key(b.$('#draft'),'n',{altKey:true});assert.equal(b.state().current,'q01');key(b.$('#question-search'),'p',{altKey:true});assert.equal(b.state().current,'q01');
+ key(b.$('#question'),'n',{altKey:true,isComposing:true});assert.equal(b.state().current,'q01');key(b.$('#question'),'n',{altKey:true,repeat:true});assert.equal(b.state().current,'q01');
+ key(b.$('#question'),'n',{altKey:true});assert.equal(b.state().current,'q02');key(b.$('#question'),'p',{altKey:true});assert.equal(b.state().current,'q01');
+ key(b.$('#question'),'g',{altKey:true});assert.equal(b.$('#practice-navigation-dialog').open,true);key(b.$('#practice-position'),'n',{altKey:true});assert.equal(b.state().current,'q01');b.click('#practice-navigation-close');
+ b.click('#exam-tab');b.value('#exam-minutes','5');b.click('#start-exam');const before=JSON.stringify(b.state().exam);key(b.$('#question'),'n',{altKey:true});key(b.$('#question'),'g',{altKey:true});assert.equal(JSON.stringify(b.state().exam),before);assert.equal(b.app.navigatePractice('q02'),false);assert.equal(b.app.movePractice(1),false);assert.equal(b.$('#practice-navigation-dialog').open,false);
+});
+test('submitted exam review separates wrong, missed and unrated questions, cycles within each and updates after rating',t=>{
+ const b=boot();t.after(b.close);const objective=b.app.bank.filter(q=>!q.manual).slice(0,3),written=b.app.bank.filter(q=>q.manual).slice(0,2),ids=[...objective,...written].map(q=>q.id);
+ b.state().mode='exam';b.state().exam={id:'review-test',ids,answers:{[ids[0]]:objective[0].correct,[ids[1]]:(objective[1].correct+1)%4,[ids[3]]:'文字题的完整回答'},index:0,submitted:false,autoSubmitted:false,startedAt:NOW,deadlineAt:NOW+300000,finishedAt:0};b.app.render();
+ assert.equal(b.$('[data-exam-review]'),null);b.advance(300001);
+ assert.equal(b.$('[data-exam-review="wrong"]').textContent,'错题 · 1');assert.equal(b.$('[data-exam-review="missed"]').textContent,'未作答 · 2');assert.equal(b.$('[data-exam-review="unrated"]').textContent,'待自评 · 1');
+ const results=JSON.stringify(b.state().lastTest),outcomes=JSON.stringify(b.state().outcomes);
+ b.click('[data-exam-review="wrong"]');assert.equal(b.state().exam.index,1);assert.match(b.$('.feedback').textContent,/本题答错/);
+ b.click('[data-exam-review="missed"]');assert.equal(b.state().exam.index,2);assert.match(b.$('.feedback').textContent,/本题未作答/);assert.equal(b.$(`[data-q="${ids[2]}"] .item-status`).textContent,'未作答');
+ b.click('[data-exam-review="missed"]');assert.equal(b.state().exam.index,4);assert.equal(b.$(`[data-q="${ids[4]}"] .item-status`).textContent,'未作答');b.click('[data-exam-review="missed"]');assert.equal(b.state().exam.index,2);
+ b.click('[data-exam-review="unrated"]');assert.equal(b.state().exam.index,3);b.click('[data-rating="basic"]');assert.equal(b.$('[data-exam-review="unrated"]').disabled,true);assert.equal(b.$('[data-exam-review="unrated"]').textContent,'待自评 · 0');
+ assert.equal(JSON.stringify(b.state().lastTest),results);assert.equal(JSON.stringify(b.state().outcomes),outcomes);assert.equal(Object.hasOwn(b.state().outcomes,ids[2]),false);assert.equal(b.app.C.isCompleted(b.state(),ids[4]),false);
+ const c=boot({local:b.stored()});t.after(c.close);assert.equal(c.state().exam.submitted,true);assert.equal(c.$('[data-exam-review="missed"]').textContent,'未作答 · 2');
+});
 test('October 30 and 31 contain complete rounds and retain new Qt answers and exam scope',t=>{
  const now=Date.parse('2026-10-31T12:00:00+08:00'),b=boot({now,mobile:true});t.after(b.close);
  for(const date of ['2026-10-30','2026-10-31']){
