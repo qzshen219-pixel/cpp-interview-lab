@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="输入选项，随机抽签。也可以随手掷骰子或抛硬币。">
+<title>随机决策台</title>
+<style>
+:root { color-scheme: dark; --bg:#101417; --surface:#171e22; --line:#303d43; --muted:#a5b4b8; --ink:#f1f6f4; --lime:#d9f76a; --mono:ui-monospace,Consolas,monospace; }
+* { box-sizing:border-box; }
+body { margin:0; min-height:100vh; font:16px/1.55 system-ui,"Microsoft YaHei",sans-serif; background:radial-gradient(ellipse at 78% 0%,#233233 0%,transparent 50%),var(--bg); color:var(--ink); }
+main { width:min(100% - 36px,960px); margin:auto; padding:48px 0 24px; }
+header { padding:0 0 32px; }
+.brand { color:var(--lime); font:700 .78rem var(--mono); letter-spacing:.18em; display:flex; gap:10px; align-items:center; }
+.mark { width:26px; height:26px; border:1px solid #667747; display:grid; place-items:center; border-radius:7px; font-size:1rem; }
+h1 { margin:.3em 0 .1em; font-size:clamp(2.5rem,8vw,4.7rem); letter-spacing:-.07em; line-height:1.15; }
+header p { color:var(--muted); margin:12px 0 0; }
+.layout { display:grid; grid-template-columns:1fr .9fr; gap:16px; }
+.card { background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:24px; min-width:0; }
+.kicker { font:700 .72rem var(--mono); letter-spacing:.13em; color:var(--lime); }
+h2 { margin:9px 0 4px; font-size:1.35rem; }
+.hint { display:block; margin:0 0 14px; color:var(--muted); font-size:.88rem; }
+textarea { display:block; width:100%; min-height:160px; resize:vertical; padding:12px 14px; background:#101619; color:var(--ink); border:1px solid var(--line); border-radius:12px; font:inherit; }
+button { cursor:pointer; font:inherit; color:var(--ink); background:#1f282d; border:1px solid #3a484d; border-radius:10px; padding:9px 13px; }
+button:hover { border-color:var(--lime); }
+button:focus-visible,textarea:focus-visible { outline:2px solid var(--lime); outline-offset:3px; }
+.actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:14px; }
+.primary { background:var(--lime); color:#1a210e; border-color:var(--lime); font-weight:750; flex:1 0 130px; }
+.result { display:grid; grid-template-rows:auto 1fr auto; background:linear-gradient(155deg,#273228,#192123 72%); }
+.display { min-height:175px; display:grid; place-items:center; padding:18px 0; text-align:center; }
+.display p { margin:0; font-size:clamp(1.75rem,6vw,3.3rem); line-height:1.1; font-weight:800; color:var(--lime); overflow-wrap:anywhere; }
+#message { margin:0; color:var(--muted); font-size:.86rem; min-height:1.4em; }
+.history { margin-top:16px; display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding-block:16px; }
+.history h2 { margin:0 6px 0 0; font-size:.9rem; }
+ol { flex:1 1 240px; list-style:none; display:flex; flex-wrap:wrap; gap:8px; margin:0; padding:0; }
+li { border:1px solid var(--line); padding:3px 9px; border-radius:8px; font-size:.85rem; max-width:100%; overflow-wrap:anywhere; }
+.history button { padding:4px 10px; font-size:.8rem; }
+.empty,footer { color:var(--muted); font-size:.82rem; }
+footer { text-align:center; padding-top:20px; }
+@media (max-width:620px) { main { padding-top:28px; } header { padding-bottom:22px; } .layout { grid-template-columns:1fr; } .card { padding:18px; } .display { min-height:118px; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+<div class="brand"><span class="mark" aria-hidden="true">✦</span> CHANCE STUDIO</div>
+<h1>随机决策台</h1>
+<p>午饭吃什么、周末去哪儿？把选项交给运气。</p>
+</header>
+<div class="layout">
+<section class="card" aria-labelledby="options-heading">
+<div class="kicker">01 / INPUT</div>
+<h2 id="options-heading"><label for="options">候选选项</label></h2>
+<p id="hint" class="hint">每行一个选项，自动忽略空行和重复项。</p>
+<textarea id="options" aria-describedby="hint" maxlength="5000" spellcheck="false">火锅
+面馆
+烤肉
+点外卖</textarea>
+<div class="actions">
+<button class="primary" id="draw" type="button">抽一个选项</button>
+<button id="die" type="button">掷骰子</button>
+<button id="coin" type="button">抛硬币</button>
+</div>
+</section>
+<section class="card result" aria-labelledby="result-heading" aria-live="polite" aria-atomic="true">
+<div class="kicker" id="result-heading">02 / RESULT · 本次结果</div>
+<div class="display"><p id="result">等你来抽</p></div>
+<p id="message">抽签、骰子、硬币，随时试一试。</p>
+</section>
+</div>
+<section class="card history" aria-labelledby="history-heading">
+<h2 id="history-heading">最近结果</h2>
+<ol id="history"><li class="empty">还没有记录</li></ol>
+<button id="clear" type="button" hidden>清空</button>
+</section>
+<footer>选项和结果只在当前页面处理，刷新后恢复初始状态。</footer>
+</main>
+<script>
+const options = document.getElementById("options");
+const result = document.getElementById("result");
+const message = document.getElementById("message");
+const historyList = document.getElementById("history");
+const clear = document.getElementById("clear");
+const entries = [];
+const sample = new Uint32Array(1);
+
+function randomIndex(size) {
+  const range = 2 ** 32;
+  const limit = range - range % size;
+  do {
+    crypto.getRandomValues(sample);
+  } while (sample[0] >= limit);
+  return sample[0] % size;
+}
+
+function renderHistory() {
+  const items = entries.map(entry => {
+    const item = document.createElement("li");
+    item.textContent = entry;
+    return item;
+  });
+  if (!items.length) {
+    const placeholder = document.createElement("li");
+    placeholder.className = "empty";
+    placeholder.textContent = "还没有记录";
+    items.push(placeholder);
+  }
+  historyList.replaceChildren(...items);
+  clear.hidden = !entries.length;
+}
+
+function drawFrom(kind, values, description) {
+  const value = values[randomIndex(values.length)];
+  result.textContent = value;
+  message.textContent = description;
+  entries.unshift(kind + " · " + value);
+  if (entries.length > 5) entries.pop();
+  renderHistory();
+}
+
+document.getElementById("draw").addEventListener("click", () => {
+  const values = [...new Set(options.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean))];
+  if (!values.length) {
+    result.textContent = "等你来抽";
+    message.textContent = "请至少输入一个选项。";
+    options.focus();
+    return;
+  }
+  drawFrom("抽签", values, "从 " + values.length + " 个选项中抽出");
+});
+document.getElementById("die").addEventListener("click", () => {
+  drawFrom("骰子", ["1","2","3","4","5","6"], "六面骰");
+});
+document.getElementById("coin").addEventListener("click", () => {
+  drawFrom("硬币", ["正面","反面"], "抛硬币结果");
+});
+clear.addEventListener("click", () => {
+  entries.length = 0;
+  renderHistory();
+  document.getElementById("draw").focus();
+});
+</script>
+</body>
+</html>
